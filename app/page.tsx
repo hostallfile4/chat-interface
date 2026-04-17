@@ -4,12 +4,8 @@ import type React from "react"
 import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card } from "@/components/ui/card"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Mic, Volume2, VolumeX, Send, Moon, Sun, Plus, MessageSquare, Trash2, Menu, X, ImagePlus, Loader, ChevronDown, LogOut, Settings, User } from "lucide-react"
+import { Mic, Volume2, VolumeX, Send, Moon, Sun, Plus, Trash2, Menu, X, ImagePlus, Loader, ChevronDown, LogOut, Settings, User } from "lucide-react"
 import { useTheme } from "next-themes"
-import Image from "next/image"
-import type { SpeechRecognition, SpeechSynthesis } from "web-speech-api"
 
 const AI_MODELS = [
   { id: "gpt-4", name: "GPT-4", description: "Most capable" },
@@ -40,8 +36,8 @@ export default function ChatInterface() {
   const [isLoading, setIsLoading] = useState(false)
   const [isListening, setIsListening] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
-  const [recognition, setRecognition] = useState<SpeechRecognition | null>(null)
-  const [synthesis, setSynthesis] = useState<SpeechSynthesis | null>(null)
+  const [recognition, setRecognition] = useState<any>(null)
+  const [synthesis, setSynthesis] = useState<any>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
   const [selectedModel, setSelectedModel] = useState("gpt-4")
@@ -51,7 +47,7 @@ export default function ChatInterface() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
-  const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
 
   const currentSession = chatSessions.find((session) => session.id === currentSessionId)
   const messages = currentSession?.messages || []
@@ -68,7 +64,6 @@ export default function ChatInterface() {
   }
 
   useEffect(() => {
-    // Initialize speech recognition
     if (typeof window !== "undefined" && "webkitSpeechRecognition" in window) {
       const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition
       const recognitionInstance = new SpeechRecognition()
@@ -76,9 +71,9 @@ export default function ChatInterface() {
       recognitionInstance.interimResults = false
       recognitionInstance.lang = "en-US"
 
-      recognitionInstance.onresult = (event) => {
+      recognitionInstance.onresult = (event: any) => {
         const transcript = event.results[0][0].transcript
-        setInput((prev) => prev + " " + transcript)
+        setInput((prev) => prev + (prev ? " " : "") + transcript)
         setIsListening(false)
       }
 
@@ -100,19 +95,15 @@ export default function ChatInterface() {
     if (chatSessions.length === 0) {
       createNewChat()
     }
-
-    scrollToBottom()
   }, [])
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages, isLoading])
+  }, [messages])
 
   const scrollToBottom = () => {
     if (messagesEndRef.current) {
-      setTimeout(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: "auto" })
-      }, 0)
+      messagesEndRef.current.scrollIntoView({ behavior: "auto" })
     }
   }
 
@@ -126,29 +117,48 @@ export default function ChatInterface() {
     }
     setChatSessions((prev) => [newSession, ...prev])
     setCurrentSessionId(newSession.id)
-    setSidebarOpen(false)
   }
 
-  const switchToChat = (sessionId: string) => {
-    setCurrentSessionId(sessionId)
-    setSidebarOpen(false)
-  }
-
-  const deleteChat = (sessionId: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    setChatSessions((prev) => prev.filter((session) => session.id !== sessionId))
+  const deleteChat = (sessionId: string) => {
+    setChatSessions((prev) => prev.filter((s) => s.id !== sessionId))
     if (currentSessionId === sessionId) {
-      const remainingSessions = chatSessions.filter((session) => session.id !== sessionId)
-      if (remainingSessions.length > 0) {
-        setCurrentSessionId(remainingSessions[0].id)
-      } else {
-        createNewChat()
-      }
+      setCurrentSessionId(chatSessions[0]?.id || null)
     }
   }
 
-  const generateChatTitle = (firstMessage: string): string => {
-    return firstMessage.length > 30 ? firstMessage.substring(0, 30) + "..." : firstMessage
+  const generateChatTitle = (message: string) => {
+    return message.substring(0, 30) + (message.length > 30 ? "..." : "")
+  }
+
+  const startListening = () => {
+    if (recognition) {
+      setIsListening(true)
+      recognition.start()
+    }
+  }
+
+  const stopListening = () => {
+    if (recognition) {
+      recognition.stop()
+      setIsListening(false)
+    }
+  }
+
+  const speakMessage = (message: string) => {
+    if (synthesis) {
+      synthesis.cancel()
+      const utterance = new SpeechSynthesisUtterance(message)
+      utterance.onend = () => setIsSpeaking(false)
+      setIsSpeaking(true)
+      synthesis.speak(utterance)
+    }
+  }
+
+  const stopSpeaking = () => {
+    if (synthesis) {
+      synthesis.cancel()
+      setIsSpeaking(false)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -243,138 +253,128 @@ export default function ChatInterface() {
     }
   }
 
-  const startListening = () => {
-    if (recognition && !isListening) {
-      setIsListening(true)
-      recognition.start()
-    }
-  }
-
-  const stopListening = () => {
-    if (recognition && isListening) {
-      recognition.stop()
-      setIsListening(false)
-    }
-  }
-
-  const speakMessage = (text: string) => {
-    if (synthesis && !isSpeaking) {
-      const utterance = new SpeechSynthesisUtterance(text)
-      utterance.lang = text.match(/[\u0980-\u09FF]/) ? "bn-BD" : "en-US"
-      utterance.rate = 0.9
-      utterance.pitch = 1
-
-      utterance.onstart = () => setIsSpeaking(true)
-      utterance.onend = () => setIsSpeaking(false)
-      utterance.onerror = () => setIsSpeaking(false)
-
-      synthesis.speak(utterance)
-    }
-  }
-
-  const stopSpeaking = () => {
-    if (synthesis && isSpeaking) {
-      synthesis.cancel()
-      setIsSpeaking(false)
-    }
-  }
-
   return (
-    <div className="flex h-screen bg-background">
-      <div
-        className={`${sidebarOpen ? "translate-x-0" : "-translate-x-full"} fixed inset-y-0 left-0 z-50 w-80 bg-card border-r border-border transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0`}
+    <div className="flex h-screen bg-background text-foreground overflow-hidden">
+      {/* Sidebar Overlay for Mobile */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar */}
+      <aside
+        className={`fixed lg:static inset-y-0 left-0 w-64 bg-zinc-900 border-r border-zinc-800 flex flex-col z-50 transition-transform duration-300 ${
+          sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+        }`}
       >
-        <div className="flex flex-col h-full">
-          {/* Sidebar Header */}
-          <div className="p-4 border-b border-border">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold text-lg">Chat History</h2>
-              <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSidebarOpen(false)}>
-                <X className="h-5 w-5" />
-              </Button>
-            </div>
-            <Button onClick={createNewChat} className="w-full mt-3 justify-start bg-transparent" variant="outline">
-              <Plus className="h-4 w-4 mr-2" />
-              New Chat
-            </Button>
-          </div>
-
-          {/* Chat Sessions List */}
-          <ScrollArea className="flex-1 p-2">
-            <div className="space-y-2">
-              {chatSessions.map((session) => (
-                <div
-                  key={session.id}
-                  className={`group flex items-center gap-2 p-3 rounded-lg cursor-pointer hover:bg-muted transition-colors ${
-                    currentSessionId === session.id ? "bg-muted" : ""
-                  }`}
-                  onClick={() => switchToChat(session.id)}
-                >
-                  <MessageSquare className="h-4 w-4 flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{session.title}</p>
-                    <p className="text-xs text-muted-foreground">{session.updatedAt.toLocaleDateString()}</p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="opacity-0 group-hover:opacity-100 h-6 w-6 p-0"
-                    onClick={(e) => deleteChat(session.id, e)}
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </ScrollArea>
+        <div className="p-4 border-b border-zinc-800">
+          <Button
+            onClick={createNewChat}
+            className="w-full justify-start gap-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg"
+          >
+            <Plus className="h-4 w-4" />
+            New Chat
+          </Button>
         </div>
-      </div>
 
-      <div className="flex flex-col flex-1 min-w-0">
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {chatSessions.map((session) => (
+            <button
+              key={session.id}
+              onClick={() => {
+                setCurrentSessionId(session.id)
+                setSidebarOpen(false)
+              }}
+              className={`w-full text-left px-3 py-2 rounded-lg transition-colors group relative ${
+                currentSessionId === session.id ? "bg-zinc-700" : "hover:bg-zinc-800"
+              }`}
+            >
+              <div className="truncate text-sm font-medium">{session.title}</div>
+              <div className="text-xs text-zinc-500">{session.createdAt.toLocaleDateString()}</div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 h-8 w-8 p-0"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  deleteChat(session.id)
+                }}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </button>
+          ))}
+        </div>
+
+        <div className="p-4 border-t border-zinc-800 space-y-2">
+          <Button variant="ghost" className="w-full justify-start gap-2 text-zinc-400">
+            <User className="h-4 w-4" />
+            Profile
+          </Button>
+          <Button variant="ghost" className="w-full justify-start gap-2 text-zinc-400">
+            <Settings className="h-4 w-4" />
+            Settings
+          </Button>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col overflow-hidden">
         {/* Header */}
-        <header className="border-b border-border p-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSidebarOpen(true)}>
+        <header className="border-b border-zinc-800 bg-zinc-950 px-4 py-3 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="lg:hidden"
+              onClick={() => setSidebarOpen(true)}
+            >
               <Menu className="h-5 w-5" />
             </Button>
           </div>
-          
-          <div className="relative">
-            <Button
-              variant="outline"
-              className="flex items-center gap-2 rounded-none border-gray-300"
-              onClick={() => setShowModelDropdown(!showModelDropdown)}
-            >
-              {AI_MODELS.find(m => m.id === selectedModel)?.name}
-              <ChevronDown className="h-4 w-4" />
-            </Button>
-            
-            {showModelDropdown && (
-              <div className="absolute top-full left-0 mt-2 w-48 bg-white border border-gray-300 rounded-none shadow-lg z-50">
-                {AI_MODELS.map(model => (
-                  <button
-                    key={model.id}
-                    className={`w-full text-left px-4 py-3 border-b border-gray-200 last:border-b-0 hover:bg-gray-100 transition-colors ${
-                      selectedModel === model.id ? "bg-gray-100" : ""
-                    }`}
-                    onClick={() => {
-                      setSelectedModel(model.id)
-                      setShowModelDropdown(false)
-                    }}
-                  >
-                    <div className="font-medium">{model.name}</div>
-                    <div className="text-xs text-gray-600">{model.description}</div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
 
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+          <div className="flex items-center gap-4">
+            <div className="relative">
+              <Button
+                variant="outline"
+                className="flex items-center gap-2 rounded-lg border-zinc-700 bg-zinc-900 hover:bg-zinc-800"
+                onClick={() => setShowModelDropdown(!showModelDropdown)}
+              >
+                {AI_MODELS.find((m) => m.id === selectedModel)?.name}
+                <ChevronDown className="h-4 w-4" />
+              </Button>
+
+              {showModelDropdown && (
+                <div className="absolute top-full left-0 mt-2 w-48 bg-zinc-900 border border-zinc-700 rounded-lg shadow-lg z-50">
+                  {AI_MODELS.map((model) => (
+                    <button
+                      key={model.id}
+                      className={`w-full text-left px-4 py-3 border-b border-zinc-700 last:border-b-0 hover:bg-zinc-800 transition-colors ${
+                        selectedModel === model.id ? "bg-zinc-800" : ""
+                      }`}
+                      onClick={() => {
+                        setSelectedModel(model.id)
+                        setShowModelDropdown(false)
+                      }}
+                    >
+                      <div className="font-medium text-sm">{model.name}</div>
+                      <div className="text-xs text-zinc-500">{model.description}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            >
               {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </Button>
-            
+
             <div className="relative">
               <Button
                 variant="ghost"
@@ -383,18 +383,18 @@ export default function ChatInterface() {
               >
                 <User className="h-5 w-5" />
               </Button>
-              
+
               {showUserMenu && (
-                <div className="absolute top-full right-0 mt-2 w-48 bg-white border border-gray-300 rounded-none shadow-lg z-50">
-                  <button className="w-full text-left px-4 py-3 border-b border-gray-200 hover:bg-gray-100 flex items-center gap-2 transition-colors">
+                <div className="absolute top-full right-0 mt-2 w-48 bg-zinc-900 border border-zinc-700 rounded-lg shadow-lg z-50">
+                  <button className="w-full text-left px-4 py-3 border-b border-zinc-700 hover:bg-zinc-800 flex items-center gap-2 transition-colors text-sm">
                     <User className="h-4 w-4" />
                     Profile
                   </button>
-                  <button className="w-full text-left px-4 py-3 border-b border-gray-200 hover:bg-gray-100 flex items-center gap-2 transition-colors">
+                  <button className="w-full text-left px-4 py-3 border-b border-zinc-700 hover:bg-zinc-800 flex items-center gap-2 transition-colors text-sm">
                     <Settings className="h-4 w-4" />
                     Settings
                   </button>
-                  <button className="w-full text-left px-4 py-3 hover:bg-gray-100 flex items-center gap-2 text-red-600 transition-colors">
+                  <button className="w-full text-left px-4 py-3 hover:bg-zinc-800 flex items-center gap-2 text-red-500 transition-colors text-sm">
                     <LogOut className="h-4 w-4" />
                     Logout
                   </button>
@@ -404,127 +404,128 @@ export default function ChatInterface() {
           </div>
         </header>
 
-        {/* Chat Messages */}
-        <ScrollArea className="flex-1 overflow-y-auto">
-          <div ref={scrollAreaRef} className="p-4 space-y-4 max-w-4xl mx-auto">
-            {messages.length === 0 && (
-              <div className="text-center py-12">
-                <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
+        {/* Messages Area - Scrollable */}
+        <div
+          ref={messagesContainerRef}
+          className="flex-1 overflow-y-auto bg-gradient-to-b from-zinc-950 to-black px-4 py-6 space-y-4"
+        >
+          <div className="max-w-4xl mx-auto space-y-4">
+            {messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-96 text-center">
+                <div className="w-16 h-16 bg-zinc-800 rounded-full flex items-center justify-center mb-4">
                   <span className="text-2xl">💬</span>
                 </div>
-                <h2 className="text-xl font-semibold mb-2">Welcome!</h2>
-                <p className="text-muted-foreground">I'm your Bengali & English AI assistant. Ask me anything!</p>
+                <h2 className="text-2xl font-bold mb-2">Welcome!</h2>
+                <p className="text-zinc-400 max-w-md">
+                  Start a conversation by typing your message below or using voice input.
+                </p>
               </div>
-            )}
-
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className={`flex gap-3 ${message.role === "user" ? "justify-end" : "justify-start"} animate-in fade-in slide-in-from-bottom-2`}
-              >
-                {message.role === "assistant" && (
-                  <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center flex-shrink-0 mt-1 shadow-sm">
-                    <span className="text-white font-bold text-sm">AI</span>
-                  </div>
-                )}
-
+            ) : (
+              messages.map((message) => (
                 <div
-                  className={`flex flex-col gap-3 max-w-[85%] sm:max-w-[70%] ${message.role === "user" ? "items-end" : "items-start"}`}
+                  key={message.id}
+                  className={`flex gap-3 ${
+                    message.role === "user" ? "justify-end" : "justify-start"
+                  } animate-in fade-in slide-in-from-bottom-2`}
                 >
-                  {message.image && (
-                    <div className="rounded-xl overflow-hidden shadow-md border border-border">
-                      <img src={message.image} alt="Uploaded image" className="max-w-xs h-auto" />
+                  {message.role === "assistant" && (
+                    <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0 text-white font-bold text-sm">
+                      AI
                     </div>
                   )}
-                  <Card
-                    className={`px-5 py-3 rounded-2xl shadow-sm transition-all ${
-                      message.role === "user"
-                        ? "bg-blue-600 text-white rounded-br-none"
-                        : "bg-muted text-foreground rounded-bl-none border border-border"
+
+                  <div
+                    className={`flex flex-col gap-2 max-w-xs sm:max-w-md md:max-w-2xl ${
+                      message.role === "user" ? "items-end" : "items-start"
                     }`}
                   >
-                    <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">{message.content}</p>
-                  </Card>
-
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground px-1">
-                    <span>{message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                    {message.role === "assistant" && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-5 px-1 text-muted-foreground hover:text-foreground"
-                        onClick={() => (isSpeaking ? stopSpeaking() : speakMessage(message.content))}
-                      >
-                        {isSpeaking ? <VolumeX className="h-3 w-3" /> : <Volume2 className="h-3 w-3" />}
-                      </Button>
+                    {message.image && (
+                      <div className="rounded-lg overflow-hidden">
+                        <img
+                          src={message.image}
+                          alt="Uploaded"
+                          className="max-w-xs h-auto rounded-lg"
+                        />
+                      </div>
                     )}
-                  </div>
-                </div>
-
-                {message.role === "user" && (
-                  <div className="w-10 h-10 bg-gradient-to-br from-slate-300 to-slate-400 rounded-full flex items-center justify-center flex-shrink-0 mt-1 shadow-sm">
-                    <span className="text-sm font-semibold text-slate-700">You</span>
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {isLoading && (
-              <div className="flex gap-3 justify-start">
-                <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center flex-shrink-0 mt-1">
-                  <span className="text-primary-foreground font-bold text-xs">AI</span>
-                </div>
-                <Card className="p-4 bg-card">
-                  <div className="flex items-center gap-2">
-                    <div className="flex gap-1">
-                      <div className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"></div>
-                      <div
-                        className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"
-                        style={{ animationDelay: "0.1s" }}
-                      ></div>
-                      <div
-                        className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce"
-                        style={{ animationDelay: "0.2s" }}
-                      ></div>
+                    <div
+                      className={`px-4 py-3 rounded-lg ${
+                        message.role === "user"
+                          ? "bg-blue-600 text-white rounded-br-none"
+                          : "bg-zinc-800 text-zinc-100 rounded-bl-none"
+                      }`}
+                    >
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                        {message.content}
+                      </p>
                     </div>
-                    <span className="text-sm text-muted-foreground">Typing...</span>
-                  </div>
-                </Card>
-              </div>
-            )}
 
+                    <div className="flex items-center gap-2 text-xs text-zinc-500 px-2">
+                      <span>
+                        {message.timestamp.toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                      {message.role === "assistant" && (
+                        <button
+                          className="hover:text-zinc-300 transition-colors"
+                          onClick={() =>
+                            isSpeaking ? stopSpeaking() : speakMessage(message.content)
+                          }
+                        >
+                          {isSpeaking ? (
+                            <VolumeX className="h-3 w-3" />
+                          ) : (
+                            <Volume2 className="h-3 w-3" />
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {message.role === "user" && (
+                    <div className="w-10 h-10 bg-zinc-700 rounded-lg flex items-center justify-center flex-shrink-0 text-sm font-semibold">
+                      You
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
             <div ref={messagesEndRef} />
           </div>
-        </ScrollArea>
+        </div>
 
-        {/* Input Area */}
-        <div className="border-t border-border bg-background p-3 sm:p-4">
-          <form onSubmit={handleSubmit} className="max-w-4xl mx-auto space-y-2">
+        {/* Input Area - Fixed at Bottom */}
+        <div className="border-t border-zinc-800 bg-zinc-950 p-4 shrink-0">
+          <form onSubmit={handleSubmit} className="max-w-4xl mx-auto">
             {selectedImage && (
-              <div className="flex gap-2 items-center px-3 py-2 bg-muted rounded-lg">
-                <img src={selectedImage} alt="Selected" className="h-12 w-12 rounded-md object-cover" />
-                <span className="text-sm text-muted-foreground flex-1">Image selected</span>
-                <Button
+              <div className="flex gap-2 items-center px-3 py-2 bg-zinc-800 rounded-lg mb-3">
+                <img
+                  src={selectedImage}
+                  alt="Selected"
+                  className="h-12 w-12 rounded object-cover"
+                />
+                <span className="text-sm text-zinc-400 flex-1">Image selected</span>
+                <button
                   type="button"
-                  variant="ghost"
-                  size="sm"
+                  className="text-zinc-500 hover:text-zinc-300"
                   onClick={() => setSelectedImage(null)}
-                  className="h-6 px-2"
                 >
-                  Remove
-                </Button>
+                  <X className="h-4 w-4" />
+                </button>
               </div>
             )}
 
             <div className="flex gap-2 items-end">
-              <div className="flex-1 relative flex items-center">
+              <div className="flex-1 relative">
                 <Input
                   ref={inputRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   placeholder="Ask me anything..."
                   disabled={isLoading}
-                  className="px-4 py-3 pr-20 text-sm border border-gray-300 focus:border-gray-500 focus:outline-none transition-colors rounded-none"
+                  className="w-full px-4 py-3 bg-zinc-800 border border-zinc-700 rounded-lg focus:border-blue-500 focus:outline-none transition-colors text-sm text-white placeholder-zinc-500"
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey && input.trim()) {
                       e.preventDefault()
@@ -533,41 +534,41 @@ export default function ChatInterface() {
                   }}
                 />
 
-                <div className="absolute right-1 flex gap-1">
-                  <Button
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-1">
+                  <button
                     type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0 hover:bg-gray-200"
+                    className="p-2 hover:bg-zinc-700 rounded transition-colors"
                     onClick={() => imageInputRef.current?.click()}
                     disabled={isLoading}
-                    title="Upload image"
                   >
-                    <ImagePlus className="h-4 w-4" />
-                  </Button>
-                  <Button
+                    <ImagePlus className="h-4 w-4 text-zinc-400" />
+                  </button>
+                  <button
                     type="button"
-                    variant="ghost"
-                    size="sm"
-                    className={`h-8 w-8 p-0 transition-colors ${
-                      isListening ? "bg-red-100 text-red-600" : "hover:bg-gray-200"
+                    className={`p-2 rounded transition-colors ${
+                      isListening
+                        ? "bg-red-600 text-white"
+                        : "hover:bg-zinc-700 text-zinc-400"
                     }`}
                     onClick={isListening ? stopListening : startListening}
                     disabled={isLoading}
-                    title={isListening ? "Stop listening" : "Start listening"}
                   >
                     <Mic className="h-4 w-4" />
-                  </Button>
+                  </button>
                 </div>
               </div>
 
-              <Button
+              <button
                 type="submit"
                 disabled={!input.trim() || isLoading}
-                className="h-10 px-3 bg-gray-700 hover:bg-gray-800 text-white transition-all rounded-none"
+                className="p-3 bg-blue-600 hover:bg-blue-700 disabled:bg-zinc-700 text-white rounded-lg transition-colors disabled:cursor-not-allowed"
               >
-                {isLoading ? <Loader className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              </Button>
+                {isLoading ? (
+                  <Loader className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Send className="h-4 w-4" />
+                )}
+              </button>
             </div>
 
             <input
@@ -578,9 +579,11 @@ export default function ChatInterface() {
               className="hidden"
             />
 
-            <div className="text-xs text-muted-foreground px-3">
+            <div className="text-xs text-zinc-500 mt-2">
               {isListening ? (
-                <span className="text-blue-600 font-medium animate-pulse">Listening...</span>
+                <span className="text-blue-500 font-medium animate-pulse">
+                  Listening...
+                </span>
               ) : (
                 <span>Shift + Enter for new line</span>
               )}
@@ -588,10 +591,6 @@ export default function ChatInterface() {
           </form>
         </div>
       </div>
-
-      {sidebarOpen && (
-        <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setSidebarOpen(false)} />
-      )}
     </div>
   )
 }
