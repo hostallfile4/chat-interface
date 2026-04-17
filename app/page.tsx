@@ -6,10 +6,16 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Mic, Volume2, VolumeX, Send, Moon, Sun, Plus, MessageSquare, Trash2, Menu, X, ImagePlus, Loader } from "lucide-react"
+import { Mic, Volume2, VolumeX, Send, Moon, Sun, Plus, MessageSquare, Trash2, Menu, X, ImagePlus, Loader, ChevronDown, LogOut, Settings, User } from "lucide-react"
 import { useTheme } from "next-themes"
 import Image from "next/image"
 import type { SpeechRecognition, SpeechSynthesis } from "web-speech-api"
+
+const AI_MODELS = [
+  { id: "gpt-4", name: "GPT-4", description: "Most capable" },
+  { id: "gpt-3.5", name: "GPT-3.5", description: "Fast and efficient" },
+  { id: "claude", name: "Claude", description: "Thoughtful responses" },
+]
 
 interface Message {
   id: string
@@ -38,11 +44,14 @@ export default function ChatInterface() {
   const [synthesis, setSynthesis] = useState<SpeechSynthesis | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
+  const [selectedModel, setSelectedModel] = useState("gpt-4")
+  const [showModelDropdown, setShowModelDropdown] = useState(false)
+  const [showUserMenu, setShowUserMenu] = useState(false)
   const { theme, setTheme } = useTheme()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const scrollAreaRef = useRef<HTMLDivElement>(null)
 
   const currentSession = chatSessions.find((session) => session.id === currentSessionId)
   const messages = currentSession?.messages || []
@@ -97,10 +106,14 @@ export default function ChatInterface() {
 
   useEffect(() => {
     scrollToBottom()
-  }, [messages])
+  }, [messages, isLoading])
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    if (messagesEndRef.current) {
+      setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "auto" })
+      }, 0)
+    }
   }
 
   const createNewChat = () => {
@@ -324,22 +337,76 @@ export default function ChatInterface() {
             <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setSidebarOpen(true)}>
               <Menu className="h-5 w-5" />
             </Button>
-            <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
-              <span className="text-primary-foreground font-bold text-sm">AI</span>
-            </div>
-            <div>
-              <h1 className="font-semibold text-lg">AI Chat Assistant</h1>
-              <p className="text-sm text-muted-foreground">Bengali & English Assistant</p>
+          </div>
+          
+          <div className="relative">
+            <Button
+              variant="outline"
+              className="flex items-center gap-2 rounded-none border-gray-300"
+              onClick={() => setShowModelDropdown(!showModelDropdown)}
+            >
+              {AI_MODELS.find(m => m.id === selectedModel)?.name}
+              <ChevronDown className="h-4 w-4" />
+            </Button>
+            
+            {showModelDropdown && (
+              <div className="absolute top-full left-0 mt-2 w-48 bg-white border border-gray-300 rounded-none shadow-lg z-50">
+                {AI_MODELS.map(model => (
+                  <button
+                    key={model.id}
+                    className={`w-full text-left px-4 py-3 border-b border-gray-200 last:border-b-0 hover:bg-gray-100 transition-colors ${
+                      selectedModel === model.id ? "bg-gray-100" : ""
+                    }`}
+                    onClick={() => {
+                      setSelectedModel(model.id)
+                      setShowModelDropdown(false)
+                    }}
+                  >
+                    <div className="font-medium">{model.name}</div>
+                    <div className="text-xs text-gray-600">{model.description}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="icon" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
+              {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            </Button>
+            
+            <div className="relative">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowUserMenu(!showUserMenu)}
+              >
+                <User className="h-5 w-5" />
+              </Button>
+              
+              {showUserMenu && (
+                <div className="absolute top-full right-0 mt-2 w-48 bg-white border border-gray-300 rounded-none shadow-lg z-50">
+                  <button className="w-full text-left px-4 py-3 border-b border-gray-200 hover:bg-gray-100 flex items-center gap-2 transition-colors">
+                    <User className="h-4 w-4" />
+                    Profile
+                  </button>
+                  <button className="w-full text-left px-4 py-3 border-b border-gray-200 hover:bg-gray-100 flex items-center gap-2 transition-colors">
+                    <Settings className="h-4 w-4" />
+                    Settings
+                  </button>
+                  <button className="w-full text-left px-4 py-3 hover:bg-gray-100 flex items-center gap-2 text-red-600 transition-colors">
+                    <LogOut className="h-4 w-4" />
+                    Logout
+                  </button>
+                </div>
+              )}
             </div>
           </div>
-          <Button variant="ghost" size="icon" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-            {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-          </Button>
         </header>
 
         {/* Chat Messages */}
-        <ScrollArea className="flex-1 p-4">
-          <div className="space-y-4 max-w-4xl mx-auto">
+        <ScrollArea className="flex-1 overflow-y-auto">
+          <div ref={scrollAreaRef} className="p-4 space-y-4 max-w-4xl mx-auto">
             {messages.length === 0 && (
               <div className="text-center py-12">
                 <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
@@ -457,7 +524,7 @@ export default function ChatInterface() {
                   onChange={(e) => setInput(e.target.value)}
                   placeholder="Ask me anything..."
                   disabled={isLoading}
-                  className="rounded-full px-4 py-3 pr-24 text-sm border-2 border-transparent focus:border-blue-500 transition-colors"
+                  className="px-4 py-3 pr-20 text-sm border border-gray-300 focus:border-gray-500 focus:outline-none transition-colors rounded-none"
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey && input.trim()) {
                       e.preventDefault()
@@ -471,7 +538,7 @@ export default function ChatInterface() {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="h-8 w-8 p-0 rounded-full hover:bg-muted"
+                    className="h-8 w-8 p-0 hover:bg-gray-200"
                     onClick={() => imageInputRef.current?.click()}
                     disabled={isLoading}
                     title="Upload image"
@@ -482,8 +549,8 @@ export default function ChatInterface() {
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className={`h-8 w-8 p-0 rounded-full hover:bg-muted transition-colors ${
-                      isListening ? "bg-red-100 text-red-600" : ""
+                    className={`h-8 w-8 p-0 transition-colors ${
+                      isListening ? "bg-red-100 text-red-600" : "hover:bg-gray-200"
                     }`}
                     onClick={isListening ? stopListening : startListening}
                     disabled={isLoading}
@@ -497,7 +564,7 @@ export default function ChatInterface() {
               <Button
                 type="submit"
                 disabled={!input.trim() || isLoading}
-                className="h-10 w-10 p-0 rounded-full bg-blue-600 hover:bg-blue-700 text-white transition-all shadow-md hover:shadow-lg"
+                className="h-10 px-3 bg-gray-700 hover:bg-gray-800 text-white transition-all rounded-none"
               >
                 {isLoading ? <Loader className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </Button>
