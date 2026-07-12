@@ -338,6 +338,26 @@ export default function ChatInterface() {
 
     // Create streaming assistant message placeholder
     const assistantMessageId = `msg_${Date.now()}_assistant`
+    setInput("")
+    setSelectedImage(null)
+    setIsLoading(true)
+
+    // Add user message
+    setChatSessions((prev) =>
+      prev.map((session) => {
+        if (session.id === currentSessionId) {
+          return {
+            ...session,
+            messages: [...session.messages, userMessage],
+            title: session.messages.length === 0 ? userMessage.content.slice(0, 30) : session.title,
+            updatedAt: new Date(),
+          }
+        }
+        return session
+      })
+    )
+
+    // Create streaming assistant message placeholder
     const assistantMessagePlaceholder: Message = {
       id: assistantMessageId,
       content: "",
