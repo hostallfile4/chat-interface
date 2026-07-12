@@ -297,67 +297,12 @@ export default function ChatInterface() {
       image: selectedImage || undefined,
     }
 
-    // Update session with user message
-    setChatSessions((prev) =>
-      prev.map((session) => {
-        if (session.id === currentSessionId) {
-          const updatedMessages = [...session.messages, userMessage]
-          return {
-            ...session,
-            messages: updatedMessages,
-            title:
-              session.messages.length === 0
-                ? generateChatTitle(userMessage.content)
-                : session.title,
-            updatedAt: new Date(),
-            modelId: selectedModel,
-          }
-        }
-        return session
-      })
-    )
-
     setInput("")
     setSelectedImage(null)
     setIsLoading(true)
 
-    // Add user message
-    setChatSessions((prev) =>
-      prev.map((session) => {
-        if (session.id === currentSessionId) {
-          return {
-            ...session,
-            messages: [...session.messages, userMessage],
-            title: session.messages.length === 0 ? userMessage.content.slice(0, 30) : session.title,
-            updatedAt: new Date(),
-          }
-        }
-        return session
-      })
-    )
-
-    // Create streaming assistant message placeholder
+    // Add user message and create placeholder for assistant response
     const assistantMessageId = `msg_${Date.now()}_assistant`
-    setInput("")
-    setSelectedImage(null)
-    setIsLoading(true)
-
-    // Add user message
-    setChatSessions((prev) =>
-      prev.map((session) => {
-        if (session.id === currentSessionId) {
-          return {
-            ...session,
-            messages: [...session.messages, userMessage],
-            title: session.messages.length === 0 ? userMessage.content.slice(0, 30) : session.title,
-            updatedAt: new Date(),
-          }
-        }
-        return session
-      })
-    )
-
-    // Create streaming assistant message placeholder
     const assistantMessagePlaceholder: Message = {
       id: assistantMessageId,
       content: "",
@@ -371,7 +316,13 @@ export default function ChatInterface() {
         if (session.id === currentSessionId) {
           return {
             ...session,
-            messages: [...session.messages, assistantMessagePlaceholder],
+            messages: [...session.messages, userMessage, assistantMessagePlaceholder],
+            title:
+              session.messages.length === 0
+                ? generateChatTitle(userMessage.content)
+                : session.title,
+            updatedAt: new Date(),
+            modelId: selectedModel,
           }
         }
         return session
