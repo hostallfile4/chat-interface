@@ -52,6 +52,14 @@ export default function AdminPanel() {
       return
     }
 
+    // Validate URL format
+    try {
+      new URL(apiUrl.trim())
+    } catch (e) {
+      setMessage({ type: "error", text: "Invalid URL format. Please enter a valid URL starting with http:// or https://" })
+      return
+    }
+
     setLoading(true)
     try {
       const response = await fetch("/api/admin/config", {
@@ -63,7 +71,7 @@ export default function AdminPanel() {
       const data = await response.json()
 
       if (data.success) {
-        setMessage({ type: "success", text: "Configuration saved successfully!" })
+        setMessage({ type: "success", text: "✓ Configuration saved successfully!" })
         setConfig({ apiUrl: data.apiUrl, cacheExpiry: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() })
         // Clear models to force re-fetch
         setModels(null)
@@ -79,6 +87,11 @@ export default function AdminPanel() {
   }
 
   const handleTestConnection = async () => {
+    if (!apiUrl.trim()) {
+      setMessage({ type: "error", text: "Please save a configuration first" })
+      return
+    }
+
     setTestLoading(true)
     try {
       const response = await fetch("/api/models", { method: "GET" })
@@ -86,16 +99,18 @@ export default function AdminPanel() {
 
       if (data.success) {
         setModels(data)
+        const sourceLabel = data.source === "cache" ? "📦 From Cache (24h)" : "🌐 Fresh from API"
+        const expiryTime = new Date(data.expiresAt).toLocaleString()
         setMessage({
           type: "success",
-          text: `Connected! Found ${data.models.length} models (Source: ${data.source})`,
+          text: `✓ Connected! Found ${data.models.length} models (${sourceLabel}). Cache expires: ${expiryTime}`,
         })
       } else {
         setMessage({ type: "error", text: data.error || "Connection failed" })
       }
     } catch (error) {
       console.error("[v0] Error testing connection:", error)
-      setMessage({ type: "error", text: "Connection test failed: " + String(error) })
+      setMessage({ type: "error", text: "Connection test failed. Ensure API URL is correct and endpoint is reachable." })
     } finally {
       setTestLoading(false)
     }
@@ -237,16 +252,47 @@ export default function AdminPanel() {
           </Card>
         )}
 
-        {/* Info Card */}
-        <Card className="bg-slate-700/50 border-slate-600 p-4 mt-6">
-          <h3 className="text-sm font-semibold text-slate-300 mb-2">How it works</h3>
-          <ul className="text-xs text-slate-400 space-y-1">
-            <li>• Enter your external API URL above</li>
-            <li>• The system will fetch models from {"{url}"}/models</li>
-            <li>• Models are cached for 24 hours to reduce API calls</li>
-            <li>• You can test and refresh the cache anytime</li>
-            <li>• Available models appear in the chat interface</li>
-          </ul>
+        {/* Info Cards */}
+        <div className="grid md:grid-cols-2 gap-4 mt-6">
+          <Card className="bg-slate-700/50 border-slate-600 p-4">
+            <h3 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+              <span>⚙️ Configuration Steps</span>
+            </h3>
+            <ol className="text-xs text-slate-400 space-y-2">
+              <li className="flex gap-2"><span className="text-blue-400 font-bold">1.</span> Enter your API URL above</li>
+              <li className="flex gap-2"><span className="text-blue-400 font-bold">2.</span> Click "Save Configuration"</li>
+              <li className="flex gap-2"><span className="text-blue-400 font-bold">3.</span> Click "Test & Fetch Models"</li>
+              <li className="flex gap-2"><span className="text-blue-400 font-bold">4.</span> Models appear in chat dropdown</li>
+            </ol>
+          </Card>
+
+          <Card className="bg-slate-700/50 border-slate-600 p-4">
+            <h3 className="text-sm font-semibold text-slate-300 mb-3 flex items-center gap-2">
+              <span>💾 Caching System</span>
+            </h3>
+            <div className="text-xs text-slate-400 space-y-2">
+              <p className="flex items-center gap-2">
+                <span className="text-yellow-400">📦</span> First request: Fetches from API
+              </p>
+              <p className="flex items-center gap-2">
+                <span className="text-green-400">✓</span> Next 24 hours: Uses cached models
+              </p>
+              <p className="flex items-center gap-2">
+                <span className="text-blue-400">🔄</span> After 24 hours: Auto-refreshes cache
+              </p>
+            </div>
+          </Card>
+        </div>
+
+        <Card className="bg-slate-700/50 border-slate-600 p-4 mt-4">
+          <h3 className="text-sm font-semibold text-slate-300 mb-2 flex items-center gap-2">
+            <span>📝 API Requirements</span>
+          </h3>
+          <p className="text-xs text-slate-400 mb-3">Your API endpoint should respond to:</p>
+          <div className="bg-slate-900 rounded p-3 text-xs font-mono text-slate-300 overflow-x-auto">
+            <div>GET {"{url}"}/models</div>
+            <div className="text-slate-500 mt-2 text-xs">Returns: {`{ "models": [{"id": "model-1", ...}] }`}</div>
+          </div>
         </Card>
       </div>
     </div>

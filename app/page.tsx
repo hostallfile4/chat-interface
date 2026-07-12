@@ -34,6 +34,7 @@ interface Message {
   timestamp: Date
   image?: string
   thinking?: string
+  isStreaming?: boolean
 }
 
 interface ChatSession {
@@ -196,12 +197,100 @@ export default function ChatInterface() {
     }
   }
 
+  const handleStreamingResponse = async (messageId: string, userInput: string, model: string) => {
+    try {
+      const response = await fetch("/api/chat/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: userInput,
+          model: model,
+          sessionId: currentSessionId,
+        }),
+      })
+
+      if (!response.body) {
+        console.error("[v0] No response body from streaming API")
+        return
+      }
+
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let fullContent = ""
+      let thinkingContent = ""
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        const text = decoder.decode(value)
+        const lines = text.split("\n")
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6))
+
+              if (data.type === "thinking" && data.thinking) {
+                thinkingContent = data.thinking
+              } else if (data.type === "content" && data.content) {
+                fullContent += data.content
+
+                setChatSessions((prev) =>
+                  prev.map((session) => {
+                    if (session.id === currentSessionId) {
+                      return {
+                        ...session,
+                        messages: session.messages.map((msg) =>
+                          msg.id === messageId
+                            ? {
+                                ...msg,
+                                content: fullContent,
+                                thinking: thinkingContent,
+                                isStreaming: true,
+                              }
+                            : msg
+                        ),
+                      }
+                    }
+                    return session
+                  })
+                )
+              }
+            } catch (e) {
+              // Ignore parsing errors for non-JSON lines
+            }
+          }
+        }
+      }
+
+      // Mark streaming as complete
+      setChatSessions((prev) =>
+        prev.map((session) => {
+          if (session.id === currentSessionId) {
+            return {
+              ...session,
+              messages: session.messages.map((msg) =>
+                msg.id === messageId ? { ...msg, isStreaming: false } : msg
+              ),
+            }
+          }
+          return session
+        })
+      )
+    } catch (error) {
+      console.error("[v0] Streaming error:", error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!input.trim() || isLoading || !currentSessionId || !selectedModel) return
+    if (!input.trim() || isLoading || !currentSessionId) return
 
     const userMessage: Message = {
-      id: `msg_${Date.now()}`,
+      id: `msg_${Date.now()}_user`,
       content: input.trim(),
       role: "user",
       timestamp: new Date(),
@@ -232,137 +321,45 @@ export default function ChatInterface() {
     setSelectedImage(null)
     setIsLoading(true)
 
-    // Create assistant message placeholder
-    const assistantMessageId = `msg_${Date.now() + 1}`
-    let fullContent = ""
-    let thinking = ""
-
-    try {
-      const response = await fetch("/api/chat/stream", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: userMessage.content,
-          model: selectedModel,
-          sessionId: currentSessionId,
-          image: selectedImage,
-        }),
-      })
-
-      if (!response.ok) throw new Error("Failed to stream chat")
-
-      // Add streaming assistant message
-      setChatSessions((prev) =>
-        prev.map((session) => {
-          if (session.id === currentSessionId) {
-            return {
-              ...session,
-              messages: [
-                ...session.messages,
-                {
-                  id: assistantMessageId,
-                  content: "Thinking...",
-                  role: "assistant",
-                  timestamp: new Date(),
-                  thinking: "",
-                },
-              ],
-            }
-          }
-          return session
-        })
-      )
-
-      const reader = response.body?.getReader()
-      if (!reader) throw new Error("No response body")
-
-      const decoder = new TextDecoder()
-      let buffer = ""
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split("\n")
-        buffer = lines.pop() || ""
-
-        for (const line of lines) {
-          if (line.trim()) {
-            try {
-              const chunk = JSON.parse(line)
-
-              if (chunk.type === "content") {
-                fullContent += chunk.content || ""
-                // Update message in real-time
-                setChatSessions((prev) =>
-                  prev.map((session) => {
-                    if (session.id === currentSessionId) {
-                      return {
-                        ...session,
-                        messages: session.messages.map((msg) =>
-                          msg.id === assistantMessageId
-                            ? { ...msg, content: fullContent || "Processing..." }
-                            : msg
-                        ),
-                      }
-                    }
-                    return session
-                  })
-                )
-              } else if (chunk.type === "thinking") {
-                thinking += chunk.thinking || ""
-              } else if (chunk.type === "error") {
-                fullContent = chunk.content || "Error processing request"
-              }
-            } catch {
-              // Skip invalid JSON
-            }
+    // Add user message
+    setChatSessions((prev) =>
+      prev.map((session) => {
+        if (session.id === currentSessionId) {
+          return {
+            ...session,
+            messages: [...session.messages, userMessage],
+            title: session.messages.length === 0 ? userMessage.content.slice(0, 30) : session.title,
+            updatedAt: new Date(),
           }
         }
-      }
+        return session
+      })
+    )
 
-      // Final update with complete message
-      setChatSessions((prev) =>
-        prev.map((session) => {
-          if (session.id === currentSessionId) {
-            return {
-              ...session,
-              messages: session.messages.map((msg) =>
-                msg.id === assistantMessageId
-                  ? {
-                      ...msg,
-                      content: fullContent || "No response received",
-                      thinking: thinking || undefined,
-                    }
-                  : msg
-              ),
-              updatedAt: new Date(),
-            }
-          }
-          return session
-        })
-      )
-    } catch (error) {
-      console.error("[v0] Chat error:", error)
-      const errorContent = "Sorry, an error occurred. Please try again."
-
-      setChatSessions((prev) =>
-        prev.map((session) => {
-          if (session.id === currentSessionId) {
-            return {
-              ...session,
-              messages: session.messages.map((msg) =>
-                msg.id === assistantMessageId ? { ...msg, content: errorContent } : msg
-              ),
-            }
-          }
-          return session
-        })
-      )
-    } finally {
-      setIsLoading(false)
+    // Create streaming assistant message placeholder
+    const assistantMessageId = `msg_${Date.now()}_assistant`
+    const assistantMessagePlaceholder: Message = {
+      id: assistantMessageId,
+      content: "",
+      role: "assistant",
+      timestamp: new Date(),
+      isStreaming: true,
     }
+
+    setChatSessions((prev) =>
+      prev.map((session) => {
+        if (session.id === currentSessionId) {
+          return {
+            ...session,
+            messages: [...session.messages, assistantMessagePlaceholder],
+          }
+        }
+        return session
+      })
+    )
+
+    // Start streaming response
+    handleStreamingResponse(assistantMessageId, userMessage.content, selectedModel || "gpt-4")
   }
 
   useEffect(() => {
@@ -610,7 +607,20 @@ export default function ChatInterface() {
                           : "bg-slate-800 text-slate-100 border-slate-700"
                       }`}
                     >
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{message.content}</p>
+                      {message.thinking && (
+                        <details className="mb-2 pb-2 border-b border-slate-700">
+                          <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-300 font-medium">
+                            💭 Thinking Process
+                          </summary>
+                          <p className="text-xs text-slate-500 mt-2 italic whitespace-pre-wrap">{message.thinking}</p>
+                        </details>
+                      )}
+                      <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                        {message.content || (message.isStreaming ? "Generating response..." : "")}
+                      </p>
+                      {message.isStreaming && (
+                        <span className="inline-block ml-1 h-4 w-1 bg-slate-400 animate-pulse" />
+                      )}
                     </Card>
 
                     <div className="flex items-center gap-2 text-xs text-slate-500">
