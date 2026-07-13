@@ -209,6 +209,31 @@ export default function ChatInterface() {
         }),
       })
 
+      if (!response.ok) {
+        const error = await response.json()
+        console.error("[v0] API Error:", error)
+        setChatSessions((prev) =>
+          prev.map((session) => {
+            if (session.id === currentSessionId) {
+              return {
+                ...session,
+                messages: session.messages.map((msg) =>
+                  msg.id === messageId
+                    ? {
+                        ...msg,
+                        content: `Error: ${error.error || "Failed to get response"}`,
+                        isStreaming: false,
+                      }
+                    : msg
+                ),
+              }
+            }
+            return session
+          })
+        )
+        return
+      }
+
       if (!response.body) {
         console.error("[v0] No response body from streaming API")
         return
@@ -218,48 +243,54 @@ export default function ChatInterface() {
       const decoder = new TextDecoder()
       let fullContent = ""
       let thinkingContent = ""
+      let buffer = ""
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
-        const text = decoder.decode(value)
-        const lines = text.split("\n")
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() || ""
 
         for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.slice(6))
+          if (!line.trim()) continue
 
-              if (data.type === "thinking" && data.thinking) {
-                thinkingContent = data.thinking
-              } else if (data.type === "content" && data.content) {
-                fullContent += data.content
+          try {
+            const data = JSON.parse(line)
 
-                setChatSessions((prev) =>
-                  prev.map((session) => {
-                    if (session.id === currentSessionId) {
-                      return {
-                        ...session,
-                        messages: session.messages.map((msg) =>
-                          msg.id === messageId
-                            ? {
-                                ...msg,
-                                content: fullContent,
-                                thinking: thinkingContent,
-                                isStreaming: true,
-                              }
-                            : msg
-                        ),
-                      }
+            if (data.type === "thinking" && data.thinking) {
+              thinkingContent = data.thinking
+            } else if (data.type === "content" && data.content) {
+              fullContent += data.content
+
+              setChatSessions((prev) =>
+                prev.map((session) => {
+                  if (session.id === currentSessionId) {
+                    return {
+                      ...session,
+                      messages: session.messages.map((msg) =>
+                        msg.id === messageId
+                          ? {
+                              ...msg,
+                              content: fullContent,
+                              thinking: thinkingContent,
+                              isStreaming: true,
+                            }
+                          : msg
+                      ),
                     }
-                    return session
-                  })
-                )
-              }
-            } catch (e) {
-              // Ignore parsing errors for non-JSON lines
+                  }
+                  return session
+                })
+              )
+            } else if (data.type === "done") {
+              // Streaming complete
+              break
             }
+          } catch (e) {
+            // Ignore parsing errors for malformed lines
+            console.debug("[v0] Parse error on line:", line, e)
           }
         }
       }
@@ -278,8 +309,33 @@ export default function ChatInterface() {
           return session
         })
       )
+
+      // Save session to localStorage
+      const updated = chatSessions.find((s) => s.id === currentSessionId)
+      if (updated) {
+        localStorage.setItem("chat_sessions", JSON.stringify(chatSessions))
+      }
     } catch (error) {
       console.error("[v0] Streaming error:", error)
+      setChatSessions((prev) =>
+        prev.map((session) => {
+          if (session.id === currentSessionId) {
+            return {
+              ...session,
+              messages: session.messages.map((msg) =>
+                msg.id === messageId
+                  ? {
+                      ...msg,
+                      content: "Error: " + String(error),
+                      isStreaming: false,
+                    }
+                  : msg
+              ),
+            }
+          }
+          return session
+        })
+      )
     } finally {
       setIsLoading(false)
     }
@@ -311,23 +367,26 @@ export default function ChatInterface() {
       isStreaming: true,
     }
 
-    setChatSessions((prev) =>
-      prev.map((session) => {
-        if (session.id === currentSessionId) {
-          return {
-            ...session,
-            messages: [...session.messages, userMessage, assistantMessagePlaceholder],
-            title:
-              session.messages.length === 0
-                ? generateChatTitle(userMessage.content)
-                : session.title,
-            updatedAt: new Date(),
-            modelId: selectedModel,
-          }
+    const updatedSessions = chatSessions.map((session) => {
+      if (session.id === currentSessionId) {
+        return {
+          ...session,
+          messages: [...session.messages, userMessage, assistantMessagePlaceholder],
+          title:
+            session.messages.length === 0
+              ? generateChatTitle(userMessage.content)
+              : session.title,
+          updatedAt: new Date(),
+          modelId: selectedModel,
         }
-        return session
-      })
-    )
+      }
+      return session
+    })
+
+    setChatSessions(updatedSessions)
+    
+    // Save to localStorage immediately
+    localStorage.setItem("chat_sessions", JSON.stringify(updatedSessions))
 
     // Start streaming response
     handleStreamingResponse(assistantMessageId, userMessage.content, selectedModel || "gpt-4")
@@ -363,6 +422,18 @@ export default function ChatInterface() {
       setSynthesis(window.speechSynthesis)
     }
   }, [])
+
+  // Save sessions to localStorage whenever they change
+  useEffect(() => {
+    if (chatSessions.length > 0) {
+      localStorage.setItem("chat_sessions", JSON.stringify(chatSessions))
+    }
+  }, [chatSessions])
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages])
 
   return (
     <div className="h-screen flex bg-slate-950">
@@ -561,7 +632,7 @@ export default function ChatInterface() {
                   )}
 
                   <div
-                    className={`flex flex-col gap-2 max-w-[80%] sm:max-w-[70%] ${
+                    className={`flex flex-col gap-2 max-w-xs sm:max-w-sm md:max-w-md lg:max-w-lg ${
                       message.role === "user" ? "items-end" : "items-start"
                     }`}
                   >
@@ -626,51 +697,51 @@ export default function ChatInterface() {
         </div>
 
         {/* Input Area */}
-        <div className="border-t border-slate-700 bg-slate-900 p-4">
-          <form onSubmit={handleSubmit} className="max-w-4xl mx-auto space-y-2">
+        <div className="border-t border-slate-700 bg-slate-900 p-2 sm:p-4">
+          <form onSubmit={handleSubmit} className="space-y-2">
             {selectedImage && (
-              <div className="flex gap-2 items-center px-3 py-2 bg-slate-800 rounded">
-                <img src={selectedImage} alt="Selected" className="h-10 w-10 rounded object-cover" />
-                <span className="text-sm text-slate-300 flex-1">Image selected</span>
+              <div className="flex gap-2 items-center px-2 sm:px-3 py-2 bg-slate-800 rounded text-xs sm:text-sm">
+                <img src={selectedImage} alt="Selected" className="h-8 sm:h-10 w-8 sm:w-10 rounded object-cover" />
+                <span className="text-slate-300 flex-1">Image selected</span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   onClick={() => setSelectedImage(null)}
-                  className="h-6 px-2"
+                  className="h-5 sm:h-6 px-1 sm:px-2 text-xs"
                 >
                   Remove
                 </Button>
               </div>
             )}
 
-            <div className="flex gap-2 items-end">
+            <div className="flex gap-1 sm:gap-2 items-end">
               <div className="flex-1 relative flex items-center">
                 <Input
                   ref={inputRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder="Ask me anything..."
+                  placeholder="Ask anything..."
                   disabled={isLoading}
-                  className="px-4 py-3 pr-20 text-sm bg-slate-800 border-slate-700 text-white placeholder-slate-500 rounded-none"
+                  className="px-2 sm:px-4 py-2 sm:py-3 pr-16 sm:pr-20 text-xs sm:text-sm bg-slate-800 border-slate-700 text-white placeholder-slate-500"
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey && input.trim()) {
+                    if (e.key === "Enter" && !e.shiftKey && input.trim() && !e.nativeEvent.isComposing) {
                       e.preventDefault()
                       handleSubmit(e as any)
                     }
                   }}
                 />
 
-                <div className="absolute right-1 flex gap-1">
+                <div className="absolute right-0 sm:right-1 flex gap-0.5 sm:gap-1 pr-1 sm:pr-0">
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     onClick={() => imageInputRef.current?.click()}
                     disabled={isLoading}
-                    className="h-8 w-8 p-0 text-slate-400 hover:text-slate-200"
+                    className="h-7 sm:h-8 w-7 sm:w-8 p-0 text-slate-400 hover:text-slate-200"
                   >
-                    <ImagePlus className="h-4 w-4" />
+                    <ImagePlus className="h-3 sm:h-4 w-3 sm:w-4" />
                   </Button>
                   <Button
                     type="button"
@@ -678,11 +749,11 @@ export default function ChatInterface() {
                     size="sm"
                     onClick={isListening ? stopListening : startListening}
                     disabled={isLoading}
-                    className={`h-8 w-8 p-0 ${
+                    className={`h-7 sm:h-8 w-7 sm:w-8 p-0 ${
                       isListening ? "bg-red-500/20 text-red-400" : "text-slate-400 hover:text-slate-200"
                     }`}
                   >
-                    <Mic className="h-4 w-4" />
+                    <Mic className="h-3 sm:h-4 w-3 sm:w-4" />
                   </Button>
                 </div>
               </div>
@@ -690,9 +761,9 @@ export default function ChatInterface() {
               <Button
                 type="submit"
                 disabled={!input.trim() || isLoading}
-                className="h-10 px-3 bg-blue-600 hover:bg-blue-700 text-white rounded-none"
+                className="h-9 sm:h-10 px-2 sm:px-3 bg-blue-600 hover:bg-blue-700 text-white"
               >
-                {isLoading ? <Loader className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                {isLoading ? <Loader className="h-3 sm:h-4 w-3 sm:w-4 animate-spin" /> : <Send className="h-3 sm:h-4 w-3 sm:w-4" />}
               </Button>
             </div>
 
