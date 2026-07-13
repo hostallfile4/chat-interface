@@ -4,7 +4,6 @@ import type React from "react"
 import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card } from "@/components/ui/card"
 import {
   Mic,
   Volume2,
@@ -23,6 +22,8 @@ import {
   Settings,
   User,
   BookOpen,
+  Copy,
+  Check,
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import Link from "next/link"
@@ -53,6 +54,7 @@ export default function ChatInterface() {
   const [isLoading, setIsLoading] = useState(false)
   const [isListening, setIsListening] = useState(false)
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const [audioLoadingId, setAudioLoadingId] = useState<string | null>(null)
   const [recognition, setRecognition] = useState<any>(null)
   const [synthesis, setSynthesis] = useState<any>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -61,6 +63,7 @@ export default function ChatInterface() {
   const [availableModels, setAvailableModels] = useState<any[]>([])
   const [showModelDropdown, setShowModelDropdown] = useState(false)
   const [showUserMenu, setShowUserMenu] = useState(false)
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const { theme, setTheme } = useTheme()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -69,7 +72,7 @@ export default function ChatInterface() {
   const currentSession = chatSessions.find((session) => session.id === currentSessionId)
   const messages = currentSession?.messages || []
 
-  // Load sessions from localStorage on mount
+  // Load sessions from localStorage on mount - don't auto-create
   useEffect(() => {
     const loadSessions = async () => {
       try {
@@ -92,10 +95,6 @@ export default function ChatInterface() {
       } catch (error) {
         console.error("[v0] Error loading sessions or models:", error)
       }
-
-      if (chatSessions.length === 0) {
-        createNewChat()
-      }
     }
 
     loadSessions()
@@ -115,7 +114,7 @@ export default function ChatInterface() {
 
   const scrollToBottom = () => {
     setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: "auto" })
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
     }, 0)
   }
 
@@ -139,8 +138,6 @@ export default function ChatInterface() {
       const remaining = chatSessions.filter((s) => s.id !== sessionId)
       if (remaining.length > 0) {
         setCurrentSessionId(remaining[0].id)
-      } else {
-        createNewChat()
       }
     }
   }
@@ -159,27 +156,53 @@ export default function ChatInterface() {
     }
   }
 
-  const speakMessage = (text: string) => {
+  const speakMessage = async (text: string, messageId: string) => {
     if (!synthesis) return
 
     window.speechSynthesis.cancel()
+    setAudioLoadingId(messageId)
 
     const isBengali = /[\u0980-\u09FF]/.test(text)
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.lang = isBengali ? "bn-BD" : "en-US"
-    utterance.rate = 0.95
+    
+    try {
+      // Use Web Speech API for first 10 seconds, then progressive loading
+      const utterance = new SpeechSynthesisUtterance(text)
+      utterance.lang = isBengali ? "bn-BD" : "en-US"
+      utterance.rate = 0.95
+      utterance.pitch = isBengali ? 1.2 : 1.0
 
-    utterance.onstart = () => setIsSpeaking(true)
-    utterance.onend = () => setIsSpeaking(false)
+      utterance.onstart = () => {
+        setIsSpeaking(true)
+        setAudioLoadingId(null)
+      }
+      utterance.onend = () => {
+        setIsSpeaking(false)
+        setAudioLoadingId(null)
+      }
+      utterance.onerror = () => {
+        setAudioLoadingId(null)
+        setIsSpeaking(false)
+      }
 
-    synthesis.speak(utterance)
+      synthesis.speak(utterance)
+    } catch (error) {
+      console.error("[v0] TTS error:", error)
+      setAudioLoadingId(null)
+    }
   }
 
   const stopSpeaking = () => {
     if (synthesis) {
       window.speechSynthesis.cancel()
       setIsSpeaking(false)
+      setAudioLoadingId(null)
     }
+  }
+
+  const copyToClipboard = (text: string, messageId: string) => {
+    navigator.clipboard.writeText(text)
+    setCopiedMessageId(messageId)
+    setTimeout(() => setCopiedMessageId(null), 2000)
   }
 
   const generateChatTitle = (firstMessage: string) => {
@@ -285,11 +308,9 @@ export default function ChatInterface() {
                 })
               )
             } else if (data.type === "done") {
-              // Streaming complete
               break
             }
           } catch (e) {
-            // Ignore parsing errors for malformed lines
             console.debug("[v0] Parse error on line:", line, e)
           }
         }
@@ -310,7 +331,7 @@ export default function ChatInterface() {
         })
       )
 
-      // Save session to localStorage
+      // Save session
       const updated = chatSessions.find((s) => s.id === currentSessionId)
       if (updated) {
         localStorage.setItem("chat_sessions", JSON.stringify(chatSessions))
@@ -357,7 +378,6 @@ export default function ChatInterface() {
     setSelectedImage(null)
     setIsLoading(true)
 
-    // Add user message and create placeholder for assistant response
     const assistantMessageId = `msg_${Date.now()}_assistant`
     const assistantMessagePlaceholder: Message = {
       id: assistantMessageId,
@@ -384,16 +404,12 @@ export default function ChatInterface() {
     })
 
     setChatSessions(updatedSessions)
-    
-    // Save to localStorage immediately
     localStorage.setItem("chat_sessions", JSON.stringify(updatedSessions))
 
-    // Start streaming response
     handleStreamingResponse(assistantMessageId, userMessage.content, selectedModel || "gpt-4")
   }
 
   useEffect(() => {
-    // Initialize speech recognition
     if (typeof window !== "undefined" && "webkitSpeechRecognition" in window) {
       const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition
       const recognitionInstance = new SpeechRecognition()
@@ -423,28 +439,16 @@ export default function ChatInterface() {
     }
   }, [])
 
-  // Save sessions to localStorage whenever they change
-  useEffect(() => {
-    if (chatSessions.length > 0) {
-      localStorage.setItem("chat_sessions", JSON.stringify(chatSessions))
-    }
-  }, [chatSessions])
-
-  // Auto-scroll to bottom when new messages arrive
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages])
-
   return (
-    <div className="h-screen flex bg-slate-950">
+    <div className="h-screen flex bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
       {/* Sidebar */}
       <div
-        className={`fixed lg:static inset-0 w-64 bg-slate-900 border-r border-slate-700 flex flex-col transition-transform z-40 lg:z-0 ${
+        className={`fixed lg:static inset-0 w-64 bg-slate-900/95 backdrop-blur border-r border-slate-700/50 flex flex-col transition-transform z-40 lg:z-0 ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         }`}
       >
         {/* Sidebar Header */}
-        <div className="p-4 border-b border-slate-700 flex items-center justify-between">
+        <div className="p-4 border-b border-slate-700/50 flex items-center justify-between bg-slate-800/50">
           <h1 className="text-white font-bold text-sm">Chat History</h1>
           <Button
             variant="ghost"
@@ -457,10 +461,10 @@ export default function ChatInterface() {
         </div>
 
         {/* New Chat Button */}
-        <div className="p-4 border-b border-slate-700">
+        <div className="p-4 border-b border-slate-700/50">
           <Button
             onClick={createNewChat}
-            className="w-full bg-slate-700 hover:bg-slate-600 text-white justify-start gap-2"
+            className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white justify-start gap-2 rounded-lg"
           >
             <Plus className="h-4 w-4" />
             New Chat
@@ -468,47 +472,56 @@ export default function ChatInterface() {
         </div>
 
         {/* Sessions List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {chatSessions.map((session) => (
-            <div
-              key={session.id}
-              className={`p-3 rounded-lg cursor-pointer group transition-colors ${
-                session.id === currentSessionId
-                  ? "bg-slate-700 text-white"
-                  : "text-slate-400 hover:bg-slate-800"
-              }`}
-              onClick={() => {
-                setCurrentSessionId(session.id)
-                setSidebarOpen(false)
-              }}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{session.title}</p>
-                  <p className="text-xs text-slate-500 mt-1">
-                    {new Date(session.createdAt).toLocaleDateString()}
-                  </p>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    deleteSession(session.id)
-                  }}
-                  className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-400"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+          {chatSessions.length === 0 ? (
+            <div className="text-center py-8 text-slate-500 text-sm">
+              No chats yet. Start a new one!
             </div>
-          ))}
+          ) : (
+            chatSessions.map((session) => (
+              <div
+                key={session.id}
+                className={`p-3 rounded-lg cursor-pointer group transition-all ${
+                  session.id === currentSessionId
+                    ? "bg-gradient-to-r from-blue-600/20 to-blue-500/10 border border-blue-500/30 text-white"
+                    : "text-slate-400 hover:bg-slate-800/50"
+                }`}
+                onClick={() => {
+                  setCurrentSessionId(session.id)
+                  setSidebarOpen(false)
+                }}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{session.title}</p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      {new Date(session.createdAt).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      deleteSession(session.id)
+                    }}
+                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-400"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            ))
+          )}
         </div>
 
         {/* Sidebar Footer */}
-        <div className="border-t border-slate-700 p-4 space-y-2">
+        <div className="border-t border-slate-700/50 p-4 space-y-2 bg-slate-800/30">
           <Link href="/admin" className="w-full">
-            <Button variant="outline" className="w-full border-slate-600 text-slate-300 justify-start gap-2">
+            <Button
+              variant="outline"
+              className="w-full border-slate-600 text-slate-300 hover:bg-slate-800 justify-start gap-2"
+            >
               <BookOpen className="h-4 w-4" />
               Admin Panel
             </Button>
@@ -519,7 +532,7 @@ export default function ChatInterface() {
       {/* Main Content */}
       <div className="flex-1 flex flex-col h-screen">
         {/* Header */}
-        <header className="border-b border-slate-700 p-4 bg-slate-900 flex items-center justify-between">
+        <header className="border-b border-slate-700/50 p-4 bg-slate-900/50 backdrop-blur flex items-center justify-between sticky top-0 z-30">
           <div className="flex items-center gap-4">
             <Button
               variant="ghost"
@@ -530,25 +543,26 @@ export default function ChatInterface() {
               <Menu className="h-5 w-5" />
             </Button>
             <div>
-              <h2 className="text-white font-semibold">Chat Assistant</h2>
+              <h2 className="text-white font-semibold text-lg">Chat Assistant</h2>
               <p className="text-slate-400 text-xs">Bengali & English Support</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             {/* Model Selector */}
-            <div className="relative">
+            <div className="relative hidden sm:block">
               <Button
                 variant="outline"
                 className="border-slate-600 text-slate-300 hover:bg-slate-800 gap-2"
                 onClick={() => setShowModelDropdown(!showModelDropdown)}
               >
-                {availableModels.find((m) => m.id === selectedModel)?.id || selectedModel || "Select Model"}
+                <span className="hidden md:inline">{availableModels.find((m) => m.id === selectedModel)?.id || selectedModel || "Model"}</span>
+                <span className="md:hidden">{selectedModel ? selectedModel.slice(0, 8) : "Model"}</span>
                 <ChevronDown className="h-4 w-4" />
               </Button>
 
               {showModelDropdown && availableModels.length > 0 && (
-                <div className="absolute top-full right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded shadow-lg z-50">
+                <div className="absolute top-full right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-lg z-50">
                   {availableModels.slice(0, 5).map((model: any) => (
                     <button
                       key={model.id || model}
@@ -572,7 +586,7 @@ export default function ChatInterface() {
               variant="ghost"
               size="icon"
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              className="text-slate-300 hover:text-white"
+              className="text-slate-300 hover:text-white hover:bg-slate-800"
             >
               {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
             </Button>
@@ -583,13 +597,13 @@ export default function ChatInterface() {
                 variant="ghost"
                 size="icon"
                 onClick={() => setShowUserMenu(!showUserMenu)}
-                className="text-slate-300 hover:text-white"
+                className="text-slate-300 hover:text-white hover:bg-slate-800"
               >
                 <User className="h-5 w-5" />
               </Button>
 
               {showUserMenu && (
-                <div className="absolute top-full right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded shadow-lg z-50">
+                <div className="absolute top-full right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-lg z-50">
                   <button className="w-full text-left px-4 py-2 border-b border-slate-700 hover:bg-slate-700 flex items-center gap-2 text-slate-300 text-sm">
                     <User className="h-4 w-4" />
                     Profile
@@ -609,7 +623,7 @@ export default function ChatInterface() {
         </header>
 
         {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-950">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {messages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center">
               <div className="text-6xl mb-4">💬</div>
@@ -623,69 +637,90 @@ export default function ChatInterface() {
               {messages.map((message) => (
                 <div
                   key={message.id}
-                  className={`flex gap-3 ${message.role === "user" ? "justify-end" : "justify-start"}`}
+                  className={`flex gap-3 animate-fadeIn ${message.role === "user" ? "justify-end" : "justify-start"}`}
                 >
                   {message.role === "assistant" && (
-                    <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
+                    <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-lg">
                       <span className="text-white font-bold text-xs">AI</span>
                     </div>
                   )}
 
                   <div
-                    className={`flex flex-col gap-2 max-w-xs sm:max-w-sm md:max-w-md lg:max-w-lg ${
-                      message.role === "user" ? "items-end" : "items-start"
+                    className={`flex flex-col gap-2 ${
+                      message.role === "user" ? "items-end max-w-xs sm:max-w-sm" : "items-start max-w-sm sm:max-w-md md:max-w-lg lg:max-w-2xl"
                     }`}
                   >
                     {message.image && (
-                      <div className="rounded-lg overflow-hidden">
+                      <div className="rounded-lg overflow-hidden shadow-lg">
                         <img src={message.image} alt="Uploaded" className="max-w-xs h-auto" />
                       </div>
                     )}
 
-                    <Card
-                      className={`px-4 py-3 rounded-lg ${
+                    <div
+                      className={`px-4 py-3 rounded-lg shadow-md ${
                         message.role === "user"
-                          ? "bg-blue-600 text-white border-0"
-                          : "bg-slate-800 text-slate-100 border-slate-700"
+                          ? "bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-br-none"
+                          : "bg-slate-800 text-slate-100 border border-slate-700 rounded-bl-none"
                       }`}
                     >
                       {message.thinking && (
-                        <details className="mb-2 pb-2 border-b border-slate-700">
-                          <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-300 font-medium">
+                        <details className="mb-3 pb-3 border-b border-slate-700">
+                          <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-300 font-medium select-none">
                             💭 Thinking Process
                           </summary>
-                          <p className="text-xs text-slate-500 mt-2 italic whitespace-pre-wrap">{message.thinking}</p>
+                          <p className="text-xs text-slate-400 mt-2 italic whitespace-pre-wrap font-mono">
+                            {message.thinking}
+                          </p>
                         </details>
                       )}
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                        {message.content || (message.isStreaming ? "Generating response..." : "")}
-                      </p>
+                      <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                        {message.content || (message.isStreaming ? "✨ Generating..." : "")}
+                      </div>
                       {message.isStreaming && (
-                        <span className="inline-block ml-1 h-4 w-1 bg-slate-400 animate-pulse" />
+                        <div className="inline-block ml-1 h-4 w-0.5 bg-slate-400 animate-pulse" />
                       )}
-                    </Card>
+                    </div>
 
-                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                    <div className="flex items-center gap-2 text-xs text-slate-500 px-1">
                       <span>{new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                      
                       {message.role === "assistant" && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-5 px-1 text-slate-500 hover:text-slate-300"
-                          onClick={() => (isSpeaking ? stopSpeaking() : speakMessage(message.content))}
-                        >
-                          {isSpeaking ? (
-                            <VolumeX className="h-3 w-3" />
-                          ) : (
-                            <Volume2 className="h-3 w-3" />
-                          )}
-                        </Button>
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-5 px-1 text-slate-500 hover:text-slate-300"
+                            onClick={() => copyToClipboard(message.content, message.id)}
+                          >
+                            {copiedMessageId === message.id ? (
+                              <Check className="h-3 w-3 text-green-400" />
+                            ) : (
+                              <Copy className="h-3 w-3" />
+                            )}
+                          </Button>
+                          
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-5 px-1 text-slate-500 hover:text-slate-300"
+                            onClick={() => audioLoadingId === message.id && isSpeaking ? stopSpeaking() : speakMessage(message.content, message.id)}
+                            disabled={audioLoadingId !== null && audioLoadingId !== message.id}
+                          >
+                            {audioLoadingId === message.id ? (
+                              <Loader className="h-3 w-3 animate-spin" />
+                            ) : isSpeaking && audioLoadingId === message.id ? (
+                              <VolumeX className="h-3 w-3 text-blue-400" />
+                            ) : (
+                              <Volume2 className="h-3 w-3" />
+                            )}
+                          </Button>
+                        </>
                       )}
                     </div>
                   </div>
 
                   {message.role === "user" && (
-                    <div className="w-8 h-8 bg-gradient-to-br from-slate-400 to-slate-500 rounded-full flex items-center justify-center flex-shrink-0">
+                    <div className="w-8 h-8 bg-gradient-to-br from-slate-400 to-slate-500 rounded-lg flex items-center justify-center flex-shrink-0 shadow-lg">
                       <span className="text-white font-bold text-xs">You</span>
                     </div>
                   )}
@@ -697,33 +732,33 @@ export default function ChatInterface() {
         </div>
 
         {/* Input Area */}
-        <div className="border-t border-slate-700 bg-slate-900 p-2 sm:p-4">
-          <form onSubmit={handleSubmit} className="space-y-2">
+        <div className="border-t border-slate-700/50 bg-slate-900/50 backdrop-blur p-3 sm:p-4 sticky bottom-0">
+          <form onSubmit={handleSubmit} className="space-y-3 max-w-4xl mx-auto">
             {selectedImage && (
-              <div className="flex gap-2 items-center px-2 sm:px-3 py-2 bg-slate-800 rounded text-xs sm:text-sm">
-                <img src={selectedImage} alt="Selected" className="h-8 sm:h-10 w-8 sm:w-10 rounded object-cover" />
+              <div className="flex gap-2 items-center px-3 py-2 bg-slate-800/50 rounded-lg border border-slate-700/50 text-xs sm:text-sm">
+                <img src={selectedImage} alt="Selected" className="h-10 w-10 rounded object-cover" />
                 <span className="text-slate-300 flex-1">Image selected</span>
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
                   onClick={() => setSelectedImage(null)}
-                  className="h-5 sm:h-6 px-1 sm:px-2 text-xs"
+                  className="h-6 px-2 text-xs"
                 >
                   Remove
                 </Button>
               </div>
             )}
 
-            <div className="flex gap-1 sm:gap-2 items-end">
+            <div className="flex gap-2 items-end">
               <div className="flex-1 relative flex items-center">
                 <Input
                   ref={inputRef}
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder="Ask anything..."
+                  placeholder="Ask anything... (Shift + Enter for new line)"
                   disabled={isLoading}
-                  className="px-2 sm:px-4 py-2 sm:py-3 pr-16 sm:pr-20 text-xs sm:text-sm bg-slate-800 border-slate-700 text-white placeholder-slate-500"
+                  className="px-4 py-3 pr-20 text-sm bg-slate-800/50 border border-slate-700/50 text-white placeholder-slate-500 rounded-lg focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/30 transition-colors"
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey && input.trim() && !e.nativeEvent.isComposing) {
                       e.preventDefault()
@@ -732,16 +767,16 @@ export default function ChatInterface() {
                   }}
                 />
 
-                <div className="absolute right-0 sm:right-1 flex gap-0.5 sm:gap-1 pr-1 sm:pr-0">
+                <div className="absolute right-2 flex gap-1">
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     onClick={() => imageInputRef.current?.click()}
                     disabled={isLoading}
-                    className="h-7 sm:h-8 w-7 sm:w-8 p-0 text-slate-400 hover:text-slate-200"
+                    className="h-8 w-8 p-0 text-slate-400 hover:text-slate-200 hover:bg-slate-700"
                   >
-                    <ImagePlus className="h-3 sm:h-4 w-3 sm:w-4" />
+                    <ImagePlus className="h-4 w-4" />
                   </Button>
                   <Button
                     type="button"
@@ -749,28 +784,29 @@ export default function ChatInterface() {
                     size="sm"
                     onClick={isListening ? stopListening : startListening}
                     disabled={isLoading}
-                    className={`h-7 sm:h-8 w-7 sm:w-8 p-0 ${
-                      isListening ? "bg-red-500/20 text-red-400" : "text-slate-400 hover:text-slate-200"
+                    className={`h-8 w-8 p-0 ${
+                      isListening ? "bg-red-500/20 text-red-400" : "text-slate-400 hover:text-slate-200 hover:bg-slate-700"
                     }`}
                   >
-                    <Mic className="h-3 sm:h-4 w-3 sm:w-4" />
+                    <Mic className="h-4 w-4" />
                   </Button>
                 </div>
               </div>
 
               <Button
                 type="submit"
-                disabled={!input.trim() || isLoading}
-                className="h-9 sm:h-10 px-2 sm:px-3 bg-blue-600 hover:bg-blue-700 text-white"
+                disabled={!input.trim() || isLoading || !currentSessionId}
+                className="h-10 px-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg"
               >
-                {isLoading ? <Loader className="h-3 sm:h-4 w-3 sm:w-4 animate-spin" /> : <Send className="h-3 sm:h-4 w-3 sm:w-4" />}
+                {isLoading ? <Loader className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </Button>
             </div>
 
             <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
 
-            <div className="text-xs text-slate-500 px-1">
-              {isListening ? <span className="text-blue-400 animate-pulse">Listening...</span> : <span>Shift + Enter for new line</span>}
+            <div className="text-xs text-slate-500 px-1 flex items-center justify-between">
+              <span>{isListening ? <span className="text-blue-400 animate-pulse">🎤 Listening...</span> : ""}</span>
+              {currentSessionId === null && <span className="text-amber-500">Start a new chat to begin</span>}
             </div>
           </form>
         </div>
