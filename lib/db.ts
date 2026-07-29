@@ -1,8 +1,20 @@
 import { neon } from "@neondatabase/serverless"
 
-export const sql = neon(process.env.DATABASE_URL || "")
+let sql: any
+
+if (process.env.DATABASE_URL) {
+  sql = neon(process.env.DATABASE_URL)
+} else {
+  // Dummy SQL function for build time when DATABASE_URL is not available
+  sql = async () => [] as any
+}
 
 export async function initializeDatabase() {
+  if (!process.env.DATABASE_URL) {
+    console.warn("[v0] DATABASE_URL not set, skipping database initialization")
+    return
+  }
+
   try {
     // Create tables if they don't exist
     await sql`
@@ -57,6 +69,7 @@ export async function initializeDatabase() {
 }
 
 export async function getApiConfig() {
+  if (!process.env.DATABASE_URL) return null
   try {
     const result = await sql`SELECT api_url FROM api_config ORDER BY id LIMIT 1;`
     return result[0]?.api_url || null
@@ -67,6 +80,7 @@ export async function getApiConfig() {
 }
 
 export async function setApiConfig(apiUrl: string) {
+  if (!process.env.DATABASE_URL) return false
   try {
     await sql`DELETE FROM api_config WHERE id > 0;`
     await sql`INSERT INTO api_config (api_url) VALUES (${apiUrl});`
@@ -78,6 +92,7 @@ export async function setApiConfig(apiUrl: string) {
 }
 
 export async function getCachedModels() {
+  if (!process.env.DATABASE_URL) return null
   try {
     const result = await sql`
       SELECT models, expires_at FROM model_cache 
@@ -92,6 +107,7 @@ export async function getCachedModels() {
 }
 
 export async function setCachedModels(models: any) {
+  if (!process.env.DATABASE_URL) return false
   try {
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours from now
 
@@ -108,6 +124,7 @@ export async function setCachedModels(models: any) {
 }
 
 export async function saveSession(sessionId: string, title: string, modelId: string) {
+  if (!process.env.DATABASE_URL) return false
   try {
     await sql`
       INSERT INTO chat_sessions (id, title, model_id)
@@ -131,6 +148,7 @@ export async function saveMessage(
   content: string,
   thinking?: any
 ) {
+  if (!process.env.DATABASE_URL) return false
   try {
     await sql`
       INSERT INTO chat_messages (id, session_id, role, content, thinking_process)
@@ -144,6 +162,7 @@ export async function saveMessage(
 }
 
 export async function getSessionMessages(sessionId: string) {
+  if (!process.env.DATABASE_URL) return []
   try {
     const messages = await sql`
       SELECT id, role, content, thinking_process, created_at

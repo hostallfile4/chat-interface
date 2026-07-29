@@ -1,7 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { neon } from "@neondatabase/serverless"
-
-const sql = neon(process.env.DATABASE_URL!)
+import { saveMessage } from "@/lib/db"
 
 interface Message {
   id: string
@@ -41,23 +39,14 @@ export async function POST(request: NextRequest) {
     // Generate AI response
     const response = await generateResponse(message, history)
 
-    // Store conversation in database
+    // Store conversation in database (optional - continues even if fails)
     try {
-      await sql`
-        CREATE TABLE IF NOT EXISTS conversations (
-          id SERIAL PRIMARY KEY,
-          user_message TEXT NOT NULL,
-          assistant_response TEXT NOT NULL,
-          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        )
-      `
-
-      await sql`
-        INSERT INTO conversations (user_message, assistant_response)
-        VALUES (${message}, ${response})
-      `
+      const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      // Note: This requires a session ID from the frontend in production
+      await saveMessage(messageId, "default_session", "user", message)
+      await saveMessage(messageId + "_resp", "default_session", "assistant", response)
     } catch (dbError) {
-      console.error("Database error:", dbError)
+      console.error("[v0] Database storage error (non-blocking):", dbError)
       // Continue even if database fails
     }
 

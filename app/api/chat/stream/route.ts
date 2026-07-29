@@ -7,8 +7,19 @@ interface StreamChunk {
   thinking?: string
 }
 
-async function* streamResponse(message: string, model: string, apiUrl: string) {
+async function* streamResponse(
+  message: string,
+  model: string,
+  apiUrl: string,
+  userContext: string = ""
+) {
   try {
+    // Append user context to message if provided
+    let finalMessage = message
+    if (userContext.trim()) {
+      finalMessage = `[User Context: ${userContext}]\n\n${message}`
+    }
+
     const response = await fetch(apiUrl + "/chat/completions", {
       method: "POST",
       headers: {
@@ -16,7 +27,7 @@ async function* streamResponse(message: string, model: string, apiUrl: string) {
       },
       body: JSON.stringify({
         model: model,
-        messages: [{ role: "user", content: message }],
+        messages: [{ role: "user", content: finalMessage }],
         stream: true,
       }),
     })
@@ -84,7 +95,7 @@ export async function POST(request: NextRequest) {
   try {
     await initializeDatabase()
 
-    const { message, model, sessionId } = await request.json()
+    const { message, model, sessionId, userId, userContext } = await request.json()
 
     if (!message || !model || !sessionId) {
       return NextResponse.json(
@@ -101,11 +112,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Create readable stream for streaming response
+    // Create readable stream for streaming response with userContext
     const readable = new ReadableStream({
       async start(controller) {
         try {
-          for await (const chunk of streamResponse(message, model, apiUrl)) {
+          for await (const chunk of streamResponse(message, model, apiUrl, userContext)) {
             const chunkStr = JSON.stringify(chunk) + "\n"
             controller.enqueue(new TextEncoder().encode(chunkStr))
           }
