@@ -1,272 +1,217 @@
 "use client"
 
-import type React from "react"
-import { useState, useRef, useEffect } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Card } from "@/components/ui/card"
+import { Menu, Send, Plus, Settings, Copy, Check, Trash2, LogOut, Sun, Moon, Mic, Loader } from "lucide-react"
 import {
-  Mic,
-  Volume2,
-  VolumeX,
-  Send,
-  Moon,
-  Sun,
-  Plus,
-  Trash2,
-  Menu,
-  X,
-  ImagePlus,
-  Loader,
-  ChevronDown,
-  LogOut,
-  Settings,
-  User,
-  BookOpen,
-  Copy,
-  Check,
-} from "lucide-react"
-import { useTheme } from "next-themes"
-import Link from "next/link"
+  createUserProfile,
+  getUserProfile,
+  getUserSessions,
+  createUserSession,
+  updateUserSession,
+  deleteUserSession,
+  deleteUserProfile,
+  updateUserProfile,
+  getCurrentUserId,
+  setCurrentUserId,
+  clearCurrentUserId,
+  hasConsentBeenShown,
+  type UserProfile,
+  type UserSession,
+} from "@/lib/user-manager"
 
 interface Message {
   id: string
   content: string
   role: "user" | "assistant"
   timestamp: Date
-  image?: string
-  thinking?: string
-  isStreaming?: boolean
+  copying?: boolean
 }
 
-interface ChatSession {
-  id: string
-  title: string
-  messages: Message[]
-  modelId: string
-  createdAt: Date
-  updatedAt: Date
-}
+export default function Home() {
+  // User Management
+  const [userId, setUserId] = useState<string | null>(null)
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
+  const [showConsent, setShowConsent] = useState(false)
+  const [showProfile, setShowProfile] = useState(false)
+  const [personalContext, setPersonalContext] = useState("")
 
-export default function ChatInterface() {
-  const [chatSessions, setChatSessions] = useState<ChatSession[]>([])
-  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
+  // Chat State
+  const [sessions, setSessions] = useState<UserSession[]>([])
+  const [currentSession, setCurrentSession] = useState<UserSession | null>(null)
+  const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [theme, setTheme] = useState<"light" | "dark">("dark")
+
+  // UI State
+  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [selectedModel, setSelectedModel] = useState("gpt-4")
+  const [models, setModels] = useState<Array<{ id: string; name: string }>>([])
   const [isListening, setIsListening] = useState(false)
-  const [isSpeaking, setIsSpeaking] = useState(false)
-  const [audioLoadingId, setAudioLoadingId] = useState<string | null>(null)
-  const [recognition, setRecognition] = useState<any>(null)
-  const [synthesis, setSynthesis] = useState<any>(null)
-  const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [selectedImage, setSelectedImage] = useState<string | null>(null)
-  const [selectedModel, setSelectedModel] = useState<string | null>(null)
-  const [availableModels, setAvailableModels] = useState<any[]>([])
-  const [showModelDropdown, setShowModelDropdown] = useState(false)
-  const [showUserMenu, setShowUserMenu] = useState(false)
-  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
-  const { theme, setTheme } = useTheme()
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const imageInputRef = useRef<HTMLInputElement>(null)
 
-  const currentSession = chatSessions.find((session) => session.id === currentSessionId)
-  const messages = currentSession?.messages || []
-
-  // Load sessions from localStorage on mount - don't auto-create
+  // Initialize user on mount
   useEffect(() => {
-    const loadSessions = async () => {
-      try {
-        const stored = localStorage.getItem("chat_sessions")
-        if (stored) {
-          const sessions = JSON.parse(stored)
-          setChatSessions(sessions)
-          if (sessions.length > 0) {
-            setCurrentSessionId(sessions[0].id)
-          }
-        }
+    const initializeUser = () => {
+      const existingUserId = getCurrentUserId()
 
-        // Fetch available models
-        const modelsRes = await fetch("/api/models")
-        const modelsData = await modelsRes.json()
-        if (modelsData.success && modelsData.models.length > 0) {
-          setAvailableModels(modelsData.models)
-          setSelectedModel(modelsData.models[0].id || modelsData.models[0])
+      if (existingUserId) {
+        const profile = getUserProfile(existingUserId)
+        if (profile) {
+          setUserId(existingUserId)
+          setUserProfile(profile)
+          setPersonalContext(profile.personalContext)
+          loadUserSessions(existingUserId)
+          return
         }
-      } catch (error) {
-        console.error("[v0] Error loading sessions or models:", error)
+      }
+
+      // Check if consent was shown
+      if (!hasConsentBeenShown()) {
+        setShowConsent(true)
+      } else {
+        createNewUser()
       }
     }
 
-    loadSessions()
+    initializeUser()
   }, [])
 
-  // Save sessions to localStorage whenever they change
-  useEffect(() => {
-    if (chatSessions.length > 0) {
-      localStorage.setItem("chat_sessions", JSON.stringify(chatSessions))
-    }
-  }, [chatSessions])
+  const createNewUser = () => {
+    const profile = createUserProfile("")
+    setUserId(profile.userId)
+    setUserProfile(profile)
+    setCurrentUserId(profile.userId)
+    setSessions([])
+    setShowConsent(false)
+  }
 
-  // Scroll to bottom when messages update
+  const loadUserSessions = (userIdToLoad: string) => {
+    const userSessions = getUserSessions(userIdToLoad)
+    setSessions(userSessions)
+    if (userSessions.length > 0) {
+      setCurrentSession(userSessions[0])
+      setMessages(
+        userSessions[0].messages.map((msg: any) => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp),
+        }))
+      )
+    }
+  }
+
+  const handleConsent = () => {
+    createNewUser()
+  }
+
+  const handleNewChat = () => {
+    if (!userId) return
+
+    const newSession = createUserSession(userId, "New Chat")
+    setCurrentSession(newSession)
+    setMessages([])
+    setSessions([newSession, ...sessions])
+  }
+
+  const handleSelectSession = (session: UserSession) => {
+    setCurrentSession(session)
+    setMessages(
+      session.messages.map((msg: any) => ({
+        ...msg,
+        timestamp: new Date(msg.timestamp),
+      }))
+    )
+  }
+
+  const handleDeleteSession = (sessionId: string) => {
+    if (!userId) return
+    deleteUserSession(userId, sessionId)
+    setSessions(sessions.filter((s) => s.sessionId !== sessionId))
+    if (currentSession?.sessionId === sessionId) {
+      setCurrentSession(null)
+      setMessages([])
+    }
+  }
+
+  const handleDeleteAllSessions = () => {
+    if (!userId || !confirm("Delete all conversations?")) return
+    sessions.forEach((session) => deleteUserSession(userId, session.sessionId))
+    setSessions([])
+    setCurrentSession(null)
+    setMessages([])
+  }
+
+  const handleLogout = () => {
+    if (!userId || !confirm("Clear all data and start fresh?")) return
+    deleteUserProfile(userId)
+    clearCurrentUserId()
+    setUserId(null)
+    setUserProfile(null)
+    setSessions([])
+    setCurrentSession(null)
+    setMessages([])
+    setShowProfile(false)
+    if (!hasConsentBeenShown()) {
+      setShowConsent(true)
+    }
+  }
+
+  const handleUpdatePersonalContext = (context: string) => {
+    if (!userId) return
+    const updated = updateUserProfile(userId, context)
+    if (updated) {
+      setUserProfile(updated)
+      setPersonalContext(context)
+    }
+  }
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }
+
   useEffect(() => {
     scrollToBottom()
   }, [messages])
 
-  const scrollToBottom = () => {
-    setTimeout(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
-    }, 0)
-  }
+  const handleStreamingResponse = async (messageId: string, userInput: string) => {
+    if (!userId || !currentSession) return
 
-  const createNewChat = () => {
-    const newId = `session_${Date.now()}`
-    const newSession: ChatSession = {
-      id: newId,
-      title: "New Chat",
-      messages: [],
-      modelId: selectedModel || "gpt-4",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    }
-    setChatSessions((prev) => [newSession, ...prev])
-    setCurrentSessionId(newId)
-  }
-
-  const deleteSession = (sessionId: string) => {
-    setChatSessions((prev) => prev.filter((s) => s.id !== sessionId))
-    if (currentSessionId === sessionId) {
-      const remaining = chatSessions.filter((s) => s.id !== sessionId)
-      if (remaining.length > 0) {
-        setCurrentSessionId(remaining[0].id)
-      }
-    }
-  }
-
-  const startListening = () => {
-    if (recognition) {
-      setIsListening(true)
-      recognition.start()
-    }
-  }
-
-  const stopListening = () => {
-    if (recognition) {
-      setIsListening(false)
-      recognition.stop()
-    }
-  }
-
-  const speakMessage = async (text: string, messageId: string) => {
-    if (!synthesis) return
-
-    window.speechSynthesis.cancel()
-    setAudioLoadingId(messageId)
-
-    const isBengali = /[\u0980-\u09FF]/.test(text)
-    
-    try {
-      // Use Web Speech API for first 10 seconds, then progressive loading
-      const utterance = new SpeechSynthesisUtterance(text)
-      utterance.lang = isBengali ? "bn-BD" : "en-US"
-      utterance.rate = 0.95
-      utterance.pitch = isBengali ? 1.2 : 1.0
-
-      utterance.onstart = () => {
-        setIsSpeaking(true)
-        setAudioLoadingId(null)
-      }
-      utterance.onend = () => {
-        setIsSpeaking(false)
-        setAudioLoadingId(null)
-      }
-      utterance.onerror = () => {
-        setAudioLoadingId(null)
-        setIsSpeaking(false)
-      }
-
-      synthesis.speak(utterance)
-    } catch (error) {
-      console.error("[v0] TTS error:", error)
-      setAudioLoadingId(null)
-    }
-  }
-
-  const stopSpeaking = () => {
-    if (synthesis) {
-      window.speechSynthesis.cancel()
-      setIsSpeaking(false)
-      setAudioLoadingId(null)
-    }
-  }
-
-  const copyToClipboard = (text: string, messageId: string) => {
-    navigator.clipboard.writeText(text)
-    setCopiedMessageId(messageId)
-    setTimeout(() => setCopiedMessageId(null), 2000)
-  }
-
-  const generateChatTitle = (firstMessage: string) => {
-    return firstMessage.slice(0, 50).trim() + (firstMessage.length > 50 ? "..." : "")
-  }
-
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.currentTarget.files?.[0]
-    if (file) {
-      const reader = new FileReader()
-      reader.onload = (event) => {
-        setSelectedImage(event.target?.result as string)
-      }
-      reader.readAsDataURL(file)
-    }
-  }
-
-  const handleStreamingResponse = async (messageId: string, userInput: string, model: string) => {
     try {
       const response = await fetch("/api/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           message: userInput,
-          model: model,
-          sessionId: currentSessionId,
+          model: selectedModel,
+          sessionId: currentSession.sessionId,
+          userId,
+          userContext: personalContext,
         }),
       })
 
       if (!response.ok) {
         const error = await response.json()
-        console.error("[v0] API Error:", error)
-        setChatSessions((prev) =>
-          prev.map((session) => {
-            if (session.id === currentSessionId) {
-              return {
-                ...session,
-                messages: session.messages.map((msg) =>
-                  msg.id === messageId
-                    ? {
-                        ...msg,
-                        content: `Error: ${error.error || "Failed to get response"}`,
-                        isStreaming: false,
-                      }
-                    : msg
-                ),
-              }
-            }
-            return session
-          })
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === messageId
+              ? { ...msg, content: `Error: ${error.error || "Failed to get response"}` }
+              : msg
+          )
         )
         return
       }
 
-      if (!response.body) {
-        console.error("[v0] No response body from streaming API")
-        return
-      }
+      if (!response.body) return
 
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
-      let fullContent = ""
-      let thinkingContent = ""
       let buffer = ""
+      let fullContent = ""
 
       while (true) {
         const { done, value } = await reader.read()
@@ -278,85 +223,33 @@ export default function ChatInterface() {
 
         for (const line of lines) {
           if (!line.trim()) continue
-
           try {
             const data = JSON.parse(line)
-
-            if (data.type === "thinking" && data.thinking) {
-              thinkingContent = data.thinking
-            } else if (data.type === "content" && data.content) {
+            if (data.type === "content" && data.content) {
               fullContent += data.content
-
-              setChatSessions((prev) =>
-                prev.map((session) => {
-                  if (session.id === currentSessionId) {
-                    return {
-                      ...session,
-                      messages: session.messages.map((msg) =>
-                        msg.id === messageId
-                          ? {
-                              ...msg,
-                              content: fullContent,
-                              thinking: thinkingContent,
-                              isStreaming: true,
-                            }
-                          : msg
-                      ),
-                    }
-                  }
-                  return session
-                })
+              setMessages((prev) =>
+                prev.map((msg) =>
+                  msg.id === messageId ? { ...msg, content: fullContent } : msg
+                )
               )
-            } else if (data.type === "done") {
-              break
             }
           } catch (e) {
-            console.debug("[v0] Parse error on line:", line, e)
+            // Ignore parse errors
           }
         }
       }
 
-      // Mark streaming as complete
-      setChatSessions((prev) =>
-        prev.map((session) => {
-          if (session.id === currentSessionId) {
-            return {
-              ...session,
-              messages: session.messages.map((msg) =>
-                msg.id === messageId ? { ...msg, isStreaming: false } : msg
-              ),
-            }
-          }
-          return session
-        })
-      )
-
       // Save session
-      const updated = chatSessions.find((s) => s.id === currentSessionId)
-      if (updated) {
-        localStorage.setItem("chat_sessions", JSON.stringify(chatSessions))
+      if (currentSession) {
+        const updatedMessages = [...messages]
+        const msgIndex = updatedMessages.findIndex((m) => m.id === messageId)
+        if (msgIndex !== -1) {
+          updatedMessages[msgIndex].content = fullContent
+        }
+        updateUserSession(userId, currentSession.sessionId, { messages: updatedMessages })
       }
     } catch (error) {
       console.error("[v0] Streaming error:", error)
-      setChatSessions((prev) =>
-        prev.map((session) => {
-          if (session.id === currentSessionId) {
-            return {
-              ...session,
-              messages: session.messages.map((msg) =>
-                msg.id === messageId
-                  ? {
-                      ...msg,
-                      content: "Error: " + String(error),
-                      isStreaming: false,
-                    }
-                  : msg
-              ),
-            }
-          }
-          return session
-        })
-      )
     } finally {
       setIsLoading(false)
     }
@@ -364,460 +257,294 @@ export default function ChatInterface() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!input.trim() || isLoading || !currentSessionId) return
+    if (!input.trim() || isLoading || !currentSession || !userId) return
 
     const userMessage: Message = {
       id: `msg_${Date.now()}_user`,
       content: input.trim(),
       role: "user",
       timestamp: new Date(),
-      image: selectedImage || undefined,
     }
 
-    setInput("")
-    setSelectedImage(null)
-    setIsLoading(true)
-
-    const assistantMessageId = `msg_${Date.now()}_assistant`
-    const assistantMessagePlaceholder: Message = {
-      id: assistantMessageId,
+    const assistantMessage: Message = {
+      id: `msg_${Date.now()}_assistant`,
       content: "",
       role: "assistant",
       timestamp: new Date(),
-      isStreaming: true,
     }
 
-    const updatedSessions = chatSessions.map((session) => {
-      if (session.id === currentSessionId) {
-        return {
-          ...session,
-          messages: [...session.messages, userMessage, assistantMessagePlaceholder],
-          title:
-            session.messages.length === 0
-              ? generateChatTitle(userMessage.content)
-              : session.title,
-          updatedAt: new Date(),
-          modelId: selectedModel,
-        }
-      }
-      return session
-    })
+    const newMessages = [...messages, userMessage, assistantMessage]
+    setMessages(newMessages)
+    setInput("")
+    setIsLoading(true)
 
-    setChatSessions(updatedSessions)
-    localStorage.setItem("chat_sessions", JSON.stringify(updatedSessions))
+    // Save to session
+    updateUserSession(userId, currentSession.sessionId, { messages: newMessages })
 
-    handleStreamingResponse(assistantMessageId, userMessage.content, selectedModel || "gpt-4")
+    // Start streaming
+    handleStreamingResponse(assistantMessage.id, userMessage.content)
   }
 
-  useEffect(() => {
-    if (typeof window !== "undefined" && "webkitSpeechRecognition" in window) {
-      const SpeechRecognition = window.webkitSpeechRecognition || window.SpeechRecognition
-      const recognitionInstance = new SpeechRecognition()
-      recognitionInstance.continuous = false
-      recognitionInstance.interimResults = false
-      recognitionInstance.lang = "en-US"
-
-      recognitionInstance.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript
-        setInput((prev) => prev + (prev ? " " : "") + transcript)
-        setIsListening(false)
-      }
-
-      recognitionInstance.onerror = () => {
-        setIsListening(false)
-      }
-
-      recognitionInstance.onend = () => {
-        setIsListening(false)
-      }
-
-      setRecognition(recognitionInstance)
-    }
-
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      setSynthesis(window.speechSynthesis)
-    }
-  }, [])
+  const handleCopyMessage = async (content: string, messageId: string) => {
+    await navigator.clipboard.writeText(content)
+    setMessages((prev) =>
+      prev.map((msg) => (msg.id === messageId ? { ...msg, copying: true } : msg))
+    )
+    setTimeout(() => {
+      setMessages((prev) =>
+        prev.map((msg) => (msg.id === messageId ? { ...msg, copying: false } : msg))
+      )
+    }, 2000)
+  }
 
   return (
-    <div className="h-screen flex bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950">
+    <div className={`flex h-screen ${theme === "dark" ? "bg-slate-950" : "bg-slate-50"}`}>
       {/* Sidebar */}
       <div
-        className={`fixed lg:static inset-0 w-64 bg-slate-900/95 backdrop-blur border-r border-slate-700/50 flex flex-col transition-transform z-40 lg:z-0 ${
-          sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
-        }`}
+        className={`${
+          sidebarOpen ? "w-64" : "w-0"
+        } transition-all duration-300 ${theme === "dark" ? "bg-slate-900" : "bg-white"} border-r ${
+          theme === "dark" ? "border-slate-800" : "border-slate-200"
+        } flex flex-col overflow-hidden`}
       >
-        {/* Sidebar Header */}
-        <div className="p-4 border-b border-slate-700/50 flex items-center justify-between bg-slate-800/50">
-          <h1 className="text-white font-bold text-sm">Chat History</h1>
+        <div className="p-4 space-y-2">
           <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => setSidebarOpen(false)}
-            className="lg:hidden text-slate-300 hover:text-white"
+            onClick={handleNewChat}
+            disabled={!userId}
+            className="w-full justify-start text-sm h-9 bg-blue-600 hover:bg-blue-700"
           >
-            <X className="h-5 w-5" />
-          </Button>
-        </div>
-
-        {/* New Chat Button */}
-        <div className="p-4 border-b border-slate-700/50">
-          <Button
-            onClick={createNewChat}
-            className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white justify-start gap-2 rounded-lg"
-          >
-            <Plus className="h-4 w-4" />
+            <Plus className="w-4 h-4 mr-2" />
             New Chat
           </Button>
         </div>
 
-        {/* Sessions List */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2">
-          {chatSessions.length === 0 ? (
-            <div className="text-center py-8 text-slate-500 text-sm">
-              No chats yet. Start a new one!
+        <div className="flex-1 overflow-y-auto px-3 space-y-1">
+          {sessions.map((session) => (
+            <div
+              key={session.sessionId}
+              className={`group flex items-center gap-2 p-2 rounded cursor-pointer text-sm transition-colors ${
+                currentSession?.sessionId === session.sessionId
+                  ? theme === "dark" ? "bg-slate-800" : "bg-slate-100"
+                  : theme === "dark" ? "hover:bg-slate-800" : "hover:bg-slate-100"
+              }`}
+              onClick={() => handleSelectSession(session)}
+            >
+              <div className={`flex-1 truncate ${theme === "dark" ? "text-slate-300" : "text-slate-700"}`}>
+                {session.title}
+              </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleDeleteSession(session.sessionId)
+                }}
+                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:bg-red-600/20 rounded"
+              >
+                <Trash2 className="w-3 h-3 text-red-500" />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className={`p-3 border-t ${theme === "dark" ? "border-slate-800" : "border-slate-200"} space-y-2`}>
+          <Button
+            onClick={() => setShowProfile(true)}
+            disabled={!userId}
+            variant="outline"
+            className="w-full justify-start h-9 text-sm"
+          >
+            <Settings className="w-4 h-4 mr-2" />
+            Profile
+          </Button>
+        </div>
+      </div>
+
+      {/* Main Chat */}
+      <div className="flex-1 flex flex-col">
+        {/* Header */}
+        <div
+          className={`flex items-center justify-between p-4 border-b ${
+            theme === "dark" ? "border-slate-800" : "border-slate-200"
+          } ${theme === "dark" ? "bg-slate-900" : "bg-white"}`}
+        >
+          <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 hover:bg-slate-700/20 rounded">
+            <Menu className="w-6 h-6" />
+          </button>
+
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="px-3 py-2 text-sm bg-slate-800 border border-slate-700 rounded text-white"
+            >
+              {models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name}
+                </option>
+              ))}
+              <option value="gpt-4">gpt-4</option>
+              <option value="gpt-3.5-turbo">gpt-3.5-turbo</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              className="p-2 hover:bg-slate-700/20 rounded"
+            >
+              {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            </button>
+            <button onClick={() => setShowProfile(true)} className="p-2 hover:bg-slate-700/20 rounded">
+              <span className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-sm font-bold">
+                {userId?.charAt(5)}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {messages.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center mb-4">
+                <span className="text-2xl">💬</span>
+              </div>
+              <h2 className="text-2xl font-bold mb-2">Start a Conversation</h2>
+              <p className="text-slate-400">Select a model and ask me anything.</p>
             </div>
           ) : (
-            chatSessions.map((session) => (
+            messages.map((msg) => (
               <div
-                key={session.id}
-                className={`p-3 rounded-lg cursor-pointer group transition-all ${
-                  session.id === currentSessionId
-                    ? "bg-gradient-to-r from-blue-600/20 to-blue-500/10 border border-blue-500/30 text-white"
-                    : "text-slate-400 hover:bg-slate-800/50"
-                }`}
-                onClick={() => {
-                  setCurrentSessionId(session.id)
-                  setSidebarOpen(false)
-                }}
+                key={msg.id}
+                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{session.title}</p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      {new Date(session.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      deleteSession(session.id)
-                    }}
-                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-400"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                <div
+                  className={`max-w-md px-4 py-3 rounded-lg ${
+                    msg.role === "user"
+                      ? "bg-blue-600 text-white"
+                      : "bg-slate-800 text-slate-100"
+                  }`}
+                >
+                  <p className="whitespace-pre-wrap break-words">{msg.content || "Generating..."}</p>
+                  {msg.role === "assistant" && msg.content && (
+                    <button
+                      onClick={() => handleCopyMessage(msg.content, msg.id)}
+                      className="mt-2 text-xs opacity-70 hover:opacity-100"
+                    >
+                      {msg.copying ? (
+                        <>
+                          <Check className="w-3 h-3 inline mr-1" />
+                          Copied
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3 inline mr-1" />
+                          Copy
+                        </>
+                      )}
+                    </button>
+                  )}
                 </div>
               </div>
             ))
           )}
+          <div ref={messagesEndRef} />
         </div>
 
-        {/* Sidebar Footer */}
-        <div className="border-t border-slate-700/50 p-4 space-y-2 bg-slate-800/30">
-          <Link href="/admin" className="w-full">
+        {/* Input */}
+        <div className="p-4 border-t border-slate-800">
+          <form onSubmit={handleSubmit} className="flex gap-2">
+            <Input
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask anything..."
+              disabled={isLoading || !currentSession}
+              className="flex-1 bg-slate-800 border-slate-700 text-white placeholder-slate-500"
+            />
             <Button
-              variant="outline"
-              className="w-full border-slate-600 text-slate-300 hover:bg-slate-800 justify-start gap-2"
+              type="submit"
+              disabled={!input.trim() || isLoading || !currentSession}
+              className="bg-blue-600 hover:bg-blue-700 px-4"
             >
-              <BookOpen className="h-4 w-4" />
-              Admin Panel
+              {isLoading ? <Loader className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             </Button>
-          </Link>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col h-screen">
-        {/* Header */}
-        <header className="border-b border-slate-700/50 p-4 bg-slate-900/50 backdrop-blur flex items-center justify-between sticky top-0 z-30">
-          <div className="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setSidebarOpen(true)}
-              className="lg:hidden text-slate-300 hover:text-white"
-            >
-              <Menu className="h-5 w-5" />
-            </Button>
-            <div>
-              <h2 className="text-white font-semibold text-lg">Chat Assistant</h2>
-              <p className="text-slate-400 text-xs">Bengali & English Support</p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* Model Selector */}
-            <div className="relative hidden sm:block">
-              <Button
-                variant="outline"
-                className="border-slate-600 text-slate-300 hover:bg-slate-800 gap-2"
-                onClick={() => setShowModelDropdown(!showModelDropdown)}
-              >
-                <span className="hidden md:inline">{availableModels.find((m) => m.id === selectedModel)?.id || selectedModel || "Model"}</span>
-                <span className="md:hidden">{selectedModel ? selectedModel.slice(0, 8) : "Model"}</span>
-                <ChevronDown className="h-4 w-4" />
-              </Button>
-
-              {showModelDropdown && availableModels.length > 0 && (
-                <div className="absolute top-full right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-lg z-50">
-                  {availableModels.slice(0, 5).map((model: any) => (
-                    <button
-                      key={model.id || model}
-                      className={`w-full text-left px-4 py-2 border-b border-slate-700 last:border-b-0 hover:bg-slate-700 transition-colors text-sm ${
-                        selectedModel === model.id ? "bg-slate-700 text-blue-400" : "text-slate-300"
-                      }`}
-                      onClick={() => {
-                        setSelectedModel(model.id || model)
-                        setShowModelDropdown(false)
-                      }}
-                    >
-                      {model.id || model}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Theme Toggle */}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              className="text-slate-300 hover:text-white hover:bg-slate-800"
-            >
-              {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-            </Button>
-
-            {/* User Menu */}
-            <div className="relative">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setShowUserMenu(!showUserMenu)}
-                className="text-slate-300 hover:text-white hover:bg-slate-800"
-              >
-                <User className="h-5 w-5" />
-              </Button>
-
-              {showUserMenu && (
-                <div className="absolute top-full right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-lg shadow-lg z-50">
-                  <button className="w-full text-left px-4 py-2 border-b border-slate-700 hover:bg-slate-700 flex items-center gap-2 text-slate-300 text-sm">
-                    <User className="h-4 w-4" />
-                    Profile
-                  </button>
-                  <button className="w-full text-left px-4 py-2 border-b border-slate-700 hover:bg-slate-700 flex items-center gap-2 text-slate-300 text-sm">
-                    <Settings className="h-4 w-4" />
-                    Settings
-                  </button>
-                  <button className="w-full text-left px-4 py-2 hover:bg-slate-700 flex items-center gap-2 text-red-400 text-sm">
-                    <LogOut className="h-4 w-4" />
-                    Logout
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </header>
-
-        {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center">
-              <div className="text-6xl mb-4">💬</div>
-              <h2 className="text-2xl font-bold text-slate-200 mb-2">Start a Conversation</h2>
-              <p className="text-slate-400 max-w-sm">
-                Select a model and ask me anything. I support Bengali and English languages.
-              </p>
-            </div>
-          ) : (
-            <>
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex gap-3 animate-fadeIn ${message.role === "user" ? "justify-end" : "justify-start"}`}
-                >
-                  {message.role === "assistant" && (
-                    <div className="w-8 h-8 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center flex-shrink-0 shadow-lg">
-                      <span className="text-white font-bold text-xs">AI</span>
-                    </div>
-                  )}
-
-                  <div
-                    className={`flex flex-col gap-2 ${
-                      message.role === "user" ? "items-end max-w-xs sm:max-w-sm" : "items-start max-w-sm sm:max-w-md md:max-w-lg lg:max-w-2xl"
-                    }`}
-                  >
-                    {message.image && (
-                      <div className="rounded-lg overflow-hidden shadow-lg">
-                        <img src={message.image} alt="Uploaded" className="max-w-xs h-auto" />
-                      </div>
-                    )}
-
-                    <div
-                      className={`px-4 py-3 rounded-lg shadow-md ${
-                        message.role === "user"
-                          ? "bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-br-none"
-                          : "bg-slate-800 text-slate-100 border border-slate-700 rounded-bl-none"
-                      }`}
-                    >
-                      {message.thinking && (
-                        <details className="mb-3 pb-3 border-b border-slate-700">
-                          <summary className="cursor-pointer text-xs text-slate-400 hover:text-slate-300 font-medium select-none">
-                            💭 Thinking Process
-                          </summary>
-                          <p className="text-xs text-slate-400 mt-2 italic whitespace-pre-wrap font-mono">
-                            {message.thinking}
-                          </p>
-                        </details>
-                      )}
-                      <div className="text-sm leading-relaxed whitespace-pre-wrap break-words">
-                        {message.content || (message.isStreaming ? "✨ Generating..." : "")}
-                      </div>
-                      {message.isStreaming && (
-                        <div className="inline-block ml-1 h-4 w-0.5 bg-slate-400 animate-pulse" />
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2 text-xs text-slate-500 px-1">
-                      <span>{new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
-                      
-                      {message.role === "assistant" && (
-                        <>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-5 px-1 text-slate-500 hover:text-slate-300"
-                            onClick={() => copyToClipboard(message.content, message.id)}
-                          >
-                            {copiedMessageId === message.id ? (
-                              <Check className="h-3 w-3 text-green-400" />
-                            ) : (
-                              <Copy className="h-3 w-3" />
-                            )}
-                          </Button>
-                          
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-5 px-1 text-slate-500 hover:text-slate-300"
-                            onClick={() => audioLoadingId === message.id && isSpeaking ? stopSpeaking() : speakMessage(message.content, message.id)}
-                            disabled={audioLoadingId !== null && audioLoadingId !== message.id}
-                          >
-                            {audioLoadingId === message.id ? (
-                              <Loader className="h-3 w-3 animate-spin" />
-                            ) : isSpeaking && audioLoadingId === message.id ? (
-                              <VolumeX className="h-3 w-3 text-blue-400" />
-                            ) : (
-                              <Volume2 className="h-3 w-3" />
-                            )}
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  {message.role === "user" && (
-                    <div className="w-8 h-8 bg-gradient-to-br from-slate-400 to-slate-500 rounded-lg flex items-center justify-center flex-shrink-0 shadow-lg">
-                      <span className="text-white font-bold text-xs">You</span>
-                    </div>
-                  )}
-                </div>
-              ))}
-              <div ref={messagesEndRef} />
-            </>
-          )}
-        </div>
-
-        {/* Input Area */}
-        <div className="border-t border-slate-700/50 bg-slate-900/50 backdrop-blur p-3 sm:p-4 sticky bottom-0">
-          <form onSubmit={handleSubmit} className="space-y-3 max-w-4xl mx-auto">
-            {selectedImage && (
-              <div className="flex gap-2 items-center px-3 py-2 bg-slate-800/50 rounded-lg border border-slate-700/50 text-xs sm:text-sm">
-                <img src={selectedImage} alt="Selected" className="h-10 w-10 rounded object-cover" />
-                <span className="text-slate-300 flex-1">Image selected</span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSelectedImage(null)}
-                  className="h-6 px-2 text-xs"
-                >
-                  Remove
-                </Button>
-              </div>
-            )}
-
-            <div className="flex gap-2 items-end">
-              <div className="flex-1 relative flex items-center">
-                <Input
-                  ref={inputRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder="Ask anything... (Shift + Enter for new line)"
-                  disabled={isLoading}
-                  className="px-4 py-3 pr-20 text-sm bg-slate-800/50 border border-slate-700/50 text-white placeholder-slate-500 rounded-lg focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/30 transition-colors"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey && input.trim() && !e.nativeEvent.isComposing) {
-                      e.preventDefault()
-                      handleSubmit(e as any)
-                    }
-                  }}
-                />
-
-                <div className="absolute right-2 flex gap-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => imageInputRef.current?.click()}
-                    disabled={isLoading}
-                    className="h-8 w-8 p-0 text-slate-400 hover:text-slate-200 hover:bg-slate-700"
-                  >
-                    <ImagePlus className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={isListening ? stopListening : startListening}
-                    disabled={isLoading}
-                    className={`h-8 w-8 p-0 ${
-                      isListening ? "bg-red-500/20 text-red-400" : "text-slate-400 hover:text-slate-200 hover:bg-slate-700"
-                    }`}
-                  >
-                    <Mic className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-
-              <Button
-                type="submit"
-                disabled={!input.trim() || isLoading || !currentSessionId}
-                className="h-10 px-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg"
-              >
-                {isLoading ? <Loader className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              </Button>
-            </div>
-
-            <input ref={imageInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
-
-            <div className="text-xs text-slate-500 px-1 flex items-center justify-between">
-              <span>{isListening ? <span className="text-blue-400 animate-pulse">🎤 Listening...</span> : ""}</span>
-              {currentSessionId === null && <span className="text-amber-500">Start a new chat to begin</span>}
-            </div>
           </form>
         </div>
       </div>
 
-      {/* Mobile Overlay */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 lg:hidden z-30"
-          onClick={() => setSidebarOpen(false)}
-        />
+      {/* Consent Modal */}
+      {showConsent && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="w-96 bg-slate-900 border-slate-800 p-6 space-y-4">
+            <h2 className="text-xl font-bold">Welcome</h2>
+            <p className="text-slate-300">
+              This chat stores your conversations locally. An anonymous ID will be generated for this session.
+              No login required.
+            </p>
+            <div className="flex gap-2">
+              <Button onClick={handleConsent} className="flex-1 bg-blue-600 hover:bg-blue-700">
+                Continue
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Profile Modal */}
+      {showProfile && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <Card className="w-96 bg-slate-900 border-slate-800 p-6 space-y-4 max-h-96 overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold">Profile & Settings</h2>
+              <button onClick={() => setShowProfile(false)} className="text-slate-400 hover:text-slate-200">
+                ✕
+              </button>
+            </div>
+
+            {userId && (
+              <>
+                <div>
+                  <label className="block text-sm font-semibold mb-2">User ID</label>
+                  <div className="bg-slate-800 p-2 rounded text-xs font-mono text-slate-300 break-all">
+                    {userId}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold mb-2">Personal Context</label>
+                  <textarea
+                    value={personalContext}
+                    onChange={(e) => handleUpdatePersonalContext(e.target.value)}
+                    placeholder="Enter your preferences or instructions..."
+                    className="w-full h-24 px-3 py-2 bg-slate-800 border border-slate-700 rounded text-sm text-white placeholder-slate-500 resize-none"
+                  />
+                  <p className="text-xs text-slate-400 mt-1">
+                    This will be added to your messages to personalize responses.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Button
+                    onClick={handleDeleteAllSessions}
+                    variant="outline"
+                    className="w-full justify-start h-9 text-sm text-red-500 border-red-500/20 hover:bg-red-600/10"
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete All Conversations
+                  </Button>
+                  <Button
+                    onClick={handleLogout}
+                    variant="outline"
+                    className="w-full justify-start h-9 text-sm text-red-500 border-red-500/20 hover:bg-red-600/10"
+                  >
+                    <LogOut className="w-4 h-4 mr-2" />
+                    Clear & Start Fresh
+                  </Button>
+                </div>
+              </>
+            )}
+          </Card>
+        </div>
       )}
     </div>
   )
