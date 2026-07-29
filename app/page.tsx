@@ -60,8 +60,14 @@ export default function Home() {
   const [showConsent, setShowConsent] = useState(false)
   const [showProfile, setShowProfile] = useState(false)
   const [showModelsDropdown, setShowModelsDropdown] = useState(false)
-  const [selectedModel, setSelectedModel] = useState("")
-  const [models, setModels] = useState<Array<{ id: string; name: string }>>([])
+  const [models, setModels] = useState<Array<{ id: string; name: string }>>([
+    { id: "qwen2.5-coder:1.5b", name: "Qwen 2.5 Coder" },
+    { id: "llama3.2:latest", name: "Llama 3.2" },
+    { id: "mistral:latest", name: "Mistral" },
+    { id: "llama3.1:latest", name: "Llama 3.1" },
+    { id: "codellama:latest", name: "CodeLlama" },
+  ])
+  const [selectedModel, setSelectedModel] = useState("qwen2.5-coder:1.5b")
   const [personalContext, setPersonalContext] = useState("")
   const [profileContextEdit, setProfileContextEdit] = useState("")
   const [isSavingProfile, setIsSavingProfile] = useState(false)
@@ -70,40 +76,43 @@ export default function Home() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  // Load models on mount
+  // Load models on mount and fetch fresh list from API
   useEffect(() => {
     const loadModels = async () => {
       try {
+        // Try cached config first
         const cachedConfig = getAppConfig()
-        if (cachedConfig?.models.length) {
+        if (cachedConfig?.models?.length > 0) {
           setModels(cachedConfig.models)
-          if (!selectedModel && cachedConfig.models.length > 0) {
+          if (cachedConfig.models.length > 0) {
             setSelectedModel(cachedConfig.models[0].id)
           }
-          return
         }
 
+        // Fetch fresh models from API in background
         const response = await fetch("https://z.missionbarisal.site/v1/models")
         if (response.ok) {
           const data = await response.json()
-          const modelList = data.data.map((m: any) => ({
-            id: m.id,
-            name: m.id.split(":")[0].replace("-", " ").toUpperCase(),
-          }))
-          setModels(modelList)
-          saveAppConfig({ apiUrl: "https://z.missionbarisal.site/v1", models: modelList })
-          if (!selectedModel && modelList.length > 0) {
-            setSelectedModel(modelList[0].id)
+          if (data.data && Array.isArray(data.data)) {
+            const modelList = data.data.slice(0, 12).map((m: any) => ({
+              id: m.id,
+              name: m.id.split(":")[0].split("/").pop()?.replace(/-/g, " ").substring(0, 25) || m.id,
+            }))
+            setModels(modelList)
+            if (modelList.length > 0) {
+              setSelectedModel(modelList[0].id)
+            }
+            saveAppConfig({ apiUrl: "https://z.missionbarisal.site/v1", models: modelList })
           }
         }
       } catch (error) {
-        console.error("[app] Failed to load models:", error)
+        // Silently fail - using initial static models as fallback
       }
     }
 
     loadModels()
     cleanupExpiredProfiles()
-  }, [selectedModel])
+  }, [])
 
   // Initialize user
   useEffect(() => {
@@ -438,7 +447,9 @@ export default function Home() {
                 }`}
               >
                 <span className="max-w-[120px] sm:max-w-[180px] truncate text-xs sm:text-sm">
-                  {models.find((m) => m.id === selectedModel)?.name || "Select Model"}
+                  {models.length > 0
+                    ? models.find((m) => m.id === selectedModel)?.name || models[0].name || "Loading..."
+                    : "Loading Models..."}
                 </span>
                 <ChevronDown className="w-4 h-4" />
               </button>
